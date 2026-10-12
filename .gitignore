@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.log
+*.tmp
+.env
+.env.*
+auth.json
+credentials.json
+observations.json
+notifications.json

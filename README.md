@@ -1,27 +1,36 @@
-# FloatingEditKeys
+# Tools
 
-Windows向けの小さな編集キーウィジェットです。AutoHotkey v2で動作します。
-サイドボタン2個（コピー、ペースト）付きトラックボールマウスと併用しています。
+Windowsで日常的に使う小さなツールをまとめたリポジトリです。
 
-## 操作
+| ツール | 用途 | 起動・導入 |
+| --- | --- | --- |
+| [FloatingEditKeys](FloatingEditKeys/) | マウスの右長押しで呼び出す編集キーウィジェット | [操作・導入方法](FloatingEditKeys/README.md) |
+| [Codex Meter](CodexMeter/) | Codexの残量と、モデル・推論設定別の上限までの推定時間を表示するトレイアプリ | [起動・計算方法](CodexMeter/README.md) |
 
-| 操作 | 動作 |
-| --- | --- |
-| 右ボタンを0.5秒以上長押し | カーソル付近に表示。10秒後に自動で隠れる。呼び出し直すと10秒に戻る |
-| 短い右クリック | 通常の右クリック |
-| `ENTER` / `BACK` / `DELETE` | それぞれEnter / Backspace / Deleteを送る |
-| `WINDOW` | 切り替え対象のウィンドウを順に表示。最小化されていれば復元する |
+各ツールは個別に起動できます。FloatingEditKeysにはAutoHotkey v2、Codex MeterにはPython 3.11以降が必要です。
 
-ウィジェットは通常非表示です。呼び出し位置はカーソルがあるモニターの作業領域内に収まるよう調整されます。
+## Codex Meterの起動
 
-## インストール
+```powershell
+cd CodexMeter
+python -m pip install -r requirements.txt
+```
 
-1. [AutoHotkey v2](https://www.autohotkey.com/)をインストールします。
-2. `FloatingEditKeys.ahk`を`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`に置きます。
-3. すぐ使う場合は、そのファイルをダブルクリックします。次回からはWindowsへのサインイン時に起動します。
+`CodexMeter/CodexMeter.pyw`をダブルクリックすると、時計横のトレイに常駐します。アイコンをクリックすると小さなパネルが開き、別の場所をクリックすると閉じます。右クリックから更新・終了できます。
 
-更新後はスタートアップフォルダのファイルを置き換えて、実行中のスクリプトを再起動してください。
+## 個人データ
 
-## 設計メモ
+公開対象はコード・説明書・テストです。Codexの会話、認証情報、使用量履歴、通知履歴を含めません。
 
-縦に4つのボタンを並べたコンパクトな表示を維持しています。短い右クリックは通常の操作に使えるようにし、長押しだけを呼び出し操作に割り当てています。複数モニターとホバー表示に対応し、左ボタンを押しながらウィジェットを右ドラッグすると位置を動かせます。
+Codex Meterの観測値は`%LOCALAPPDATA%\CodexMeter`に保存し、元のCodexログは読み取りだけ行います。観測値には会話本文や認証情報を保存しません。
+
+## 開発
+
+Codex Meterの変更確認:
+
+```powershell
+cd CodexMeter
+python -m unittest discover -s tests
+```
+
+機能・使い方の変更は各ツールのREADMEと[REQUIREMENTS.md](REQUIREMENTS.md)に反映してください。
