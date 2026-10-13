@@ -26,6 +26,12 @@ def response(kind="routine", confidence=.99, risk=.05, truncated=False):
 
 
 class RoutingTests(unittest.TestCase):
+    def test_no_daemon_is_default_without_duplicate_flags(self):
+        for tail in ([], ["--no-daemon"], ["--sandbox", "read-only"]):
+            command = cli.build_command(["codex.exe"], "model", "high", "task", tail, {})
+            self.assertEqual(command.count("--no-daemon"), 1)
+            self.assertLess(command.index("--no-daemon"), command.index("--"))
+
     def test_npm_install_uses_original_node_launcher(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -115,6 +121,7 @@ class RoutingTests(unittest.TestCase):
             self.assertEqual(data["argv"][-2], "--")
             self.assertIn("read-only", data["argv"])
             self.assertIn("on-request", data["argv"])
+            self.assertIn("--no-daemon", data["argv"])
             self.assertEqual(Path(data["cwd"]), directory)
 
     def test_stale_and_expired_meter_data_are_ignored(self):

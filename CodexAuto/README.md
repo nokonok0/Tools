@@ -31,6 +31,8 @@ Get-Content -Raw -Encoding UTF8 request.txt | codex-auto -
 
 ## 選択方針
 
+Codex Autoからの対話起動には、デフォルトで`--no-daemon`を付けます。毎回指定する必要はありません。通常の`codex`コマンドや設定ファイルは変更しません。
+
 | 判定 | 優先モデル | 推論 |
 | --- | --- | --- |
 | 翻訳・形式変換などの定型作業 | GPT-6 Luna | low |

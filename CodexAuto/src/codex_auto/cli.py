@@ -299,6 +299,8 @@ def build_command(prefix, model, effort, prompt, tail, manual_options):
     if effort and "model_reasoning_effort" not in manual_options:
         command += ["-c", "model_reasoning_effort=" + json.dumps(effort)]
     command += tail
+    if "--no-daemon" not in tail:
+        command.append("--no-daemon")
     command += ["--", prompt]
     return command
 

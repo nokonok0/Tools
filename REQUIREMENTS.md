@@ -47,6 +47,8 @@
 
 ## Changes
 
+- 2026-10-13: Default Codex Auto interactive launches to `--no-daemon` without changing ordinary Codex configuration.
+
 - 2026-10-13: Rename the FloatingEditKeys repository to Tools and add Codex Meter as a separate tool. Carry forward existing FloatingEditKeys source and documentation unchanged.
 - 2026-10-13: Add uv-managed isolated dependencies and a Windows sign-in startup installer for Codex Meter.
 - 2026-10-13: Add Codex Auto, an Ollaya-based initial-request model selector for Codex CLI.
