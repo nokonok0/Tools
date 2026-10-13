@@ -4,7 +4,9 @@ Windows tray application showing observed Codex quotas and empirical per-model r
 
 ## Run
 
-Install the small tray dependency once with `python -m pip install -r requirements.txt`, then double-click `CodexMeter.pyw`. It starts in the system tray without a taskbar window. Hover for remaining quotas, reset countdowns and the latest model's short-term estimate. Click to toggle a compact panel near the taskbar on the current monitor. Clicking outside the panel, Escape or closing it hides it. Right-click for Show/Hide, Refresh and Quit. A second launch opens the existing panel through a named event. Without pystray, the window still works and closing it exits.
+Requires Windows, Python 3.11+ and uv. From this directory run `uv sync --locked --python 3.11` once to create the isolated `.venv` from `uv.lock`, then double-click `CodexMeter.pyw`. The launcher uses that environment automatically without running uv or installing packages at each launch. It starts in the system tray without a taskbar window. Hover for remaining quotas, reset countdowns and the latest model's short-term estimate. Click to toggle a compact panel near the taskbar on the current monitor. Clicking outside the panel, Escape or closing it hides it. Right-click for Show/Hide, Refresh and Quit. A second launch opens the existing panel through a named event. Without pystray, the window still works and closing it exits.
+
+To start automatically at Windows sign-in, run `powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Install-Startup.ps1` after setup. It creates a per-user `Codex Meter.lnk` startup shortcut pointing directly to `.venv\Scripts\pythonw.exe`, so no terminal window or package synchronization runs during sign-in. After moving this directory, rerun the installer to update the shortcut. Delete that shortcut from the Windows Startup folder to disable automatic launch.
 
 Fresh remaining quotas at 20% and 10% trigger a tray notification, at most once per threshold and reset window. Notification deduplication is stored in `%LOCALAPPDATA%\CodexMeter\notifications.json`. Windows notification settings control whether notifications are visible. Stale or expired observations do not notify.
 
@@ -21,6 +23,6 @@ Fresh remaining quotas at 20% and 10% trigger a tray notification, at most once 
 - Raw logs may contain conversations, but parsing retains only the listed structured metadata. Existing Codex files are never edited.
 - A missing short-term or weekly bucket stays unavailable. Custom-provider usage without Codex quota snapshots is not estimated.
 
-Run the focused checks with `python -m unittest discover -s tests`.
+Run the focused checks with `uv run --locked python -m unittest discover -s tests`.
 
 Protocol reference: https://learn.chatgpt.com/docs/app-server (account/rateLimits/read, quota window semantics).

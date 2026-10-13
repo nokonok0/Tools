@@ -1,0 +1,13 @@
+[project]
+name = "codex-meter"
+version = "0.1.0"
+description = "A Windows tray monitor for Codex usage and empirical model runway"
+requires-python = ">=3.11"
+dependencies = [
+    "pillow>=10",
+    "pystray>=0.19.5,<0.20",
+]
+
+[tool.uv]
+package = false
+environments = ["sys_platform == 'win32'"]
