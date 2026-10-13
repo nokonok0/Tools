@@ -1,67 +1,65 @@
-# Tools Requirements
+# Tools 要件
 
-## Repository
+## リポジトリ
 
-- Group small Windows tools in separate directories with a root tool index.
-- Preserve the existing FloatingEditKeys Git history.
-- Publish application source, documentation and focused tests only.
-- Keep editable/private runtime data, credentials, observations and notification history outside version control.
+- Windows用の小さなツールを個別フォルダにまとめ、ルートに一覧を置く。
+- 既存のFloatingEditKeysのGit履歴を維持する。
+- 公開するのはアプリのコード、説明書、必要なテストだけとする。
+- ユーザーが編集する実データ、個人情報、認証情報、観測値、通知履歴はGit管理から除外する。
+- README、要件書、ツールの説明、ヘルプは日本語を既定にする。固有名詞、コマンド、API名、コードの識別子は原表記を維持する。
 
 ## FloatingEditKeys
 
-- Remain normally hidden; hold the right mouse button for at least 0.5 seconds to show it near the pointer for 10 seconds.
-- Preserve ordinary short right-click behavior.
-- Provide Enter, Backspace, Delete and window cycling controls.
-- Keep the compact vertical layout and constrain placement to the current monitor work area.
-- Maintain the user's target focus when showing the widget while allowing subsequent target changes.
-- Installation and runtime remain independent of Codex Meter.
+- 通常は非表示とし、右ボタンを0.5秒以上長押しするとカーソル付近に10秒間表示する。
+- 短い右クリックは通常の動作を維持する。
+- Enter、Backspace、Delete、ウィンドウ切り替えを提供する。
+- 小さな縦並びの配置を維持し、現在のモニターの作業領域内に表示する。
+- 呼び出し時の操作対象のフォーカスを維持し、その後の対象変更も可能にする。
+- 導入・動作はCodex Meterから独立させる。
 
 ## Codex Meter
 
-- Read observed account-wide Codex quotas, reset times, models and reasoning settings from local session logs.
-- Predict remaining continuous-use time per model and reasoning setting from observed quota consumption, rather than assigning invented independent model quotas.
-- Exclude ambiguous/mixed/concurrent intervals, resets, decreasing counters and stale data from prediction. Display learning/update-pending states when appropriate.
-- Show the empirical time used for calculation and label the short-term forecast as estimated time until the limit.
-- Start hidden in the Windows tray, with no ordinary taskbar window.
-- Show remaining quotas, reset countdowns and the latest model estimate on hover.
-- Toggle a compact panel on tray click; dismiss on outside focus, Escape or Close.
-- Keep panel placement within the current monitor work area. Do not use always-on-top behavior.
-- Notify at 20% and 10% remaining once per threshold and reset window; never notify from stale observations.
-- A repeated launch opens the existing panel rather than creating a duplicate process.
-- Manage dependencies with uv and a committed lockfile in an ignored per-app `.venv`; normal double-click launch uses that environment without package installation.
-- Support automatic Windows sign-in startup through a per-user shortcut targeting the virtual environment's `pythonw.exe`, with no terminal window.
-- Read bounded recent log tails initially and only appended bytes afterward. Persist only whitelisted observations, for seven days or 24,000 events, at most every two minutes plus exit.
-- Keep Codex files read-only and use no network requests, credential reads, inference calls, CLI launches or MCP launches at runtime.
+- ローカルのセッションログから、アカウント全体の利用枠、リセット時刻、モデル、推論設定を読み取る。
+- モデルごとの独立した利用枠を仮定せず、実測の消費速度からモデル・推論設定別の連続使用可能時間を推定する。
+- 曖昧な区間、モデルの混在・並行実行、リセット、消費率の減少、古い観測値を推定から除外し、必要に応じて「計測中」「更新待ち」を表示する。
+- 計算に使った実測時間を表示し、短期枠の予測を「上限までの推定時間」と明記する。
+- 通常のタスクバーウィンドウを出さず、非表示の状態でトレイに常駐する。
+- アイコンにマウスを重ねると残量、リセットまでの時間、直近モデルの推定値を表示する。
+- アイコンのクリックで小さなパネルを開閉し、別の場所へのフォーカス、Escape、閉じる操作で隠す。
+- 現在のモニターの作業領域内に表示し、最前面固定は使用しない。
+- 残量20%・10%以下の通知は、各閾値・リセット期間につき一度だけ行う。古い観測値では通知しない。
+- 再度起動した場合は重複起動せず、既存のパネルを表示する。
+- uvと公開するロックファイルで依存関係を管理し、Git対象外の専用`.venv`を使う。通常のダブルクリック起動ではパッケージをインストールしない。
+- ユーザーのスタートアップショートカットから専用環境の`pythonw.exe`を起動し、サインイン時にもターミナルを出さない。
+- 初回は範囲を制限したログ末尾、その後は追記分だけを読む。保存する観測値は許可した項目に限定し、最大7日間または24,000イベントとする。保存は最大2分に一度と終了時に行う。
+- 既存のCodexファイルは読み取り専用とする。動作中にネットワーク通信、認証情報の読み取り、モデル推論、CLIやMCPの起動は行わない。
 
 ## Codex Auto
 
-- Provide a `codex-auto` command that uses the standard Codex TUI and classifies every new turn locally with an installed Ollaya model.
-- Select a model and supported reasoning setting from the local Codex catalog; preserve explicit user overrides.
-- Prohibit `gpt-6-astra` and `gpt-6-sol` in routing, fallback, startup overrides and native model-setting requests; omit them from model lists. Keep `gpt-6.1-sol` available and use it for demanding tasks.
-- Route uncertain, high-impact, truncated or failed judgments toward a stronger available model. Do not automatically download decision models.
-- Preserve the same thread while routing each `turn/start`; preserve terminal, directory, approval/sandbox settings, collaboration instructions, attachments and child exit status. Do not change the active model for mid-turn steering.
-- Pass requests as literal argv/JSON values with no shell interpolation. Store no request or decision history; retain bounded recent conversation excerpts only in memory.
-- Offer dry-run, JSON output without the request, model listing, and native Codex option passthrough after `--`.
-- Display fresh Codex Meter quota observations when available; do not reduce difficult-task quality solely because quota is low.
-- Limit Ollaya connections to loopback, disable proxies/redirects, and start a missing local server without visible console windows.
-- Install with uv in an isolated tool environment.
-- Use a per-session authenticated loopback bridge and private stdio App Server instead of the shared daemon. Reject browser/external/unauthenticated connections; allow up to four isolated authenticated connections for native session pickers. Clean up only owned child processes on exit.
+- 標準CodexのCLI画面を使い、新しいターンごとにインストール済みのOllayaモデルでローカル判定する`codex-auto`を提供する。
+- ローカルのCodexモデル一覧からモデルと対応する推論設定を選び、明示的な手動指定を優先する。
+- `gpt-6-astra`と`gpt-6-sol`は、自動選択、代替候補、起動時の指定、CLI内のモデル設定で禁止し、一覧からも除外する。`gpt-6.1-sol`は利用可能とし、難しい作業に使う。
+- 判定が曖昧、影響が大きい、入力が切り詰められた、判定に失敗した場合は、利用可能な高性能側へ振り分ける。判断モデルは自動ダウンロードしない。
+- 同じ会話の`turn/start`を中継する。ターミナル、作業フォルダ、承認・サンドボックス設定、モードの指示、添付、終了コードを維持する。実行中の割り込み入力では自動でモデルを変更しない。
+- 依頼を引数・JSONの値として渡し、シェルのコードとして評価しない。依頼や判定の履歴は保存せず、直近の会話の抜粋だけを上限付きでメモリ内に保持する。
+- 判定だけを試す機能、依頼文を含まないJSON出力、モデル一覧、`--`以降の通常Codexオプションの受け渡しを提供する。
+- Codex Meterに新鮮な観測値があれば残量を表示する。残量だけを理由に難しい作業のモデルを下げない。
+- Ollayaへの接続はループバックに限定し、プロキシ・リダイレクトを無効にする。停止中のローカルサーバーはコンソールを出さずに起動する。
+- uvの専用環境にインストールする。
+- 共有daemonではなく、起動ごとの認証付きローカル中継と専用の標準入出力App Serverを使う。ブラウザ、外部、未認証の接続は拒否する。標準CLIの一覧表示用として最大4接続を許可し、状態は分離する。終了時は自分が起動した子プロセスだけを終了する。
+- セッション一覧はIDで重複を除く。同名でも別IDの会話は残し、ページ送りのカーソルと保存済みの履歴は変更しない。
 
-## Changes
+## 変更履歴
 
-- 2026-10-13: Allow authenticated auxiliary connections for the native `/resume` picker, with separate request IDs/history and bounded connection count.
-
-- 2026-10-13: Enforce the user's Astra and GPT-6 Sol prohibition in Codex Auto; route investigation and failed judgments to GPT-6.1 Sol/high.
-
-- 2026-10-13: Replace startup-only routing with per-turn routing in the standard CLI, using bounded conversation context and a private authenticated App Server bridge. Verify two completed turns in one thread with different models.
-
-- 2026-10-13: Translate the Codex Meter README into Japanese while preserving setup, calculation limits and privacy guidance.
-
-- 2026-10-13: Keep the root README as a tool index with shared guidance; leave tool-specific setup and verification in individual READMEs.
-
-- 2026-10-13: Default Codex Auto interactive launches to `--no-daemon` without changing ordinary Codex configuration.
-
-- 2026-10-13: Rename the FloatingEditKeys repository to Tools and add Codex Meter as a separate tool. Carry forward existing FloatingEditKeys source and documentation unchanged.
-- 2026-10-13: Add uv-managed isolated dependencies and a Windows sign-in startup installer for Codex Meter.
-- 2026-10-13: Add Codex Auto, an Ollaya-based initial-request model selector for Codex CLI.
-- 2026-10-13: Preserve the standard npm Codex launcher and verify literal argument handoff; document UTF-8 pipeline input for Windows PowerShell.
+- 2026-10-13: 説明書、要件書、ツールの説明、ヘルパーの表示を日本語に揃え、日本語を既定とする方針を追加。
+- 2026-10-13: `/resume`の一覧で同じIDの重複表示を解消。別IDの同名会話、ページ送り、保存済みの履歴は維持。
+- 2026-10-13: `/resume`の認証済み補助接続を許可。要求IDと判断用履歴を分離し、接続数に上限を設定。
+- 2026-10-13: Codex AutoでAstra・6 Solの禁止を反映。調査や判定失敗時は6.1 Sol／highを選択。
+- 2026-10-13: 起動時だけの選択を、標準CLIの送信ごとの選択に変更。会話の抜粋と認証付き専用中継を使い、同じ会話の二つのターンで別モデルの実応答を確認。
+- 2026-10-13: Codex MeterのREADMEを日本語化し、導入、推定の制限、プライバシーの説明を維持。
+- 2026-10-13: ルートREADMEを一覧と共通案内に整理。各ツールの導入・確認手順は個別READMEへ集約。
+- 2026-10-13: Codex Autoの対話起動を`--no-daemon`既定に変更。通常のCodex設定は変更せず、その後の中継対応でも共有daemonを使わない方針を維持。
+- 2026-10-13: FloatingEditKeysのリポジトリをToolsへ改名し、Codex Meterを独立したツールとして追加。既存のFloatingEditKeysのコード・説明書を維持。
+- 2026-10-13: Codex Meterにuvの専用環境とWindowsサインイン時の自動起動設定を追加。
+- 2026-10-13: Ollayaで最初の依頼からモデルを選ぶCodex Autoを追加。
+- 2026-10-13: npm版Codexの標準ランチャーと文字列の安全な受け渡しを維持し、Windows PowerShellのUTF-8入力方法を説明。

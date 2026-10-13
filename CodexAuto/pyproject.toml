@@ -1,7 +1,7 @@
 [project]
 name = "codex-auto"
 version = "0.2.0"
-description = "Route Codex CLI turns with a local Ollaya decision model"
+description = "Ollayaで送信ごとにCodex CLIのモデルを自動選択するツール"
 requires-python = ">=3.11"
 dependencies = ["websockets>=15,<16"]
 

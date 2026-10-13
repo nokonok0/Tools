@@ -1,10 +1,11 @@
-"""Opt-in check: two tiny read-only model calls in one ephemeral thread."""
+"""一時会話で二つの短い実応答を確認します。利用枠を消費するため明示的な指定が必要です。"""
 import asyncio
 import json
 import logging
 import os
 import re
 import secrets
+import sys
 
 from websockets.asyncio.client import connect
 from websockets.asyncio.server import serve
@@ -20,7 +21,7 @@ async def verify():
     options = []
     for name in settings.get("mcp_servers", {}):
         if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
-            raise RuntimeError("Cannot safely disable an MCP configuration; skip live test")
+            raise RuntimeError("MCPを安全に無効化できないため、実応答の確認を中止します")
         options += ["-c", f"mcp_servers.{name}.enabled=false"]
     token = secrets.token_urlsafe(32)
     bridge = Bridge(native_codex() + options + ["app-server", "--stdio"], router, token)
@@ -59,16 +60,18 @@ async def verify():
                 while True:
                     message = json.loads(await asyncio.wait_for(client.recv(), 90))
                     if "method" in message and "id" in message:
-                        raise RuntimeError("Unexpected tool/approval request; stop the test")
+                        raise RuntimeError("想定外のツール・承認要求があり、確認を中止します")
                     if message.get("method") == "turn/completed":
                         if message["params"]["turn"]["status"] != "completed":
-                            raise RuntimeError("Turn failed: " + str(message["params"]["turn"].get("error")))
+                            raise RuntimeError("応答に失敗しました: " + str(message["params"]["turn"].get("error")))
                         break
-            assert selections[0] != selections[1], "model did not change"
-            print("Two completed turns, one thread: " + " -> ".join(selections))
+            assert selections[0] != selections[1], "モデルが切り替わりませんでした"
+            print("同じ会話で二つの応答が完了しました: " + " -> ".join(selections))
 
 
 if __name__ == "__main__":
+    if sys.platform == "win32":
+        sys.stdout.reconfigure(encoding="utf-8")
     import argparse
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--allow-inference", action="store_true", required=True)

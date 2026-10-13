@@ -71,7 +71,7 @@ class TurnRouter:
             mode = params.get("collaborationMode") or {}
             check_allowed_model((mode.get("settings") or {}).get("model"))
         if method in ("thread/start", "thread/resume", "thread/fork", "thread/read",
-                      "thread/rollback", "thread/settings/update", "turn/start", "model/list") and "id" in message:
+                      "thread/rollback", "thread/settings/update", "turn/start", "model/list", "thread/list") and "id" in message:
             if len(self.pending) >= 256:
                 raise RoutingError("未完了の要求が多すぎます")
             self.pending[message["id"]] = (method, deepcopy(params))
@@ -104,6 +104,17 @@ class TurnRouter:
                 return
             method, params = pending
             result = message.get("result") or {}
+            if method == "thread/list":
+                seen = set()
+                unique = []
+                for record in result.get("data", []):
+                    identifier = record.get("id")
+                    if identifier is None or identifier not in seen:
+                        unique.append(record)
+                        if identifier is not None:
+                            seen.add(identifier)
+                result["data"] = unique
+                return
             if method == "model/list":
                 result["data"] = [record for record in result.get("data", [])
                                   if (record.get("slug") or record.get("model") or record.get("id")) not in BANNED_MODELS]

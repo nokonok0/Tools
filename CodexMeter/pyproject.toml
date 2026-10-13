@@ -1,7 +1,7 @@
 [project]
 name = "codex-meter"
 version = "0.1.0"
-description = "A Windows tray monitor for Codex usage and empirical model runway"
+description = "Codexの利用枠とモデル別の上限までの推定時間を表示するWindows用トレイアプリ"
 requires-python = ">=3.11"
 dependencies = [
     "pillow>=10",

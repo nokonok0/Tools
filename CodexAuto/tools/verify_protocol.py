@@ -1,10 +1,11 @@
-"""Check the installed Codex protocol through the bridge without model inference."""
+"""モデル推論を使わず、中継とインストール済みCodexの接続を確認します。"""
 import asyncio
 import json
 import logging
 import os
 import secrets
 import tempfile
+import sys
 
 from websockets.asyncio.client import connect
 from websockets.asyncio.server import serve
@@ -38,14 +39,16 @@ async def verify():
                                               "capabilities": {"experimentalApi": True}})
             await client.send(json.dumps({"method": "initialized"}))
             models = await request(2, "model/list", {})
-            assert models.get("data"), "model list is empty"
+            assert models.get("data"), "モデル一覧が空です"
             thread = await request(3, "thread/start", {"ephemeral": True, "cwd": os.getcwd(),
                                                        "approvalPolicy": "never", "sandbox": "read-only"})
-            assert thread["thread"]["id"], "missing thread id"
-            print("Installed Codex: initialize, model/list and ephemeral thread/start passed; no inference.")
+            assert thread["thread"]["id"], "会話IDがありません"
+            print("Codexとの初期接続・モデル一覧・一時会話の作成を確認しました。モデル推論は使用していません。")
 
 
 if __name__ == "__main__":
+    if sys.platform == "win32":
+        sys.stdout.reconfigure(encoding="utf-8")
     # An empty temporary home isolates the check from credentials, hooks and MCP configuration.
     original = os.environ.get("CODEX_HOME")
     with tempfile.TemporaryDirectory(prefix="codex-auto-protocol-") as home:

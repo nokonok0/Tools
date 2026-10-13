@@ -1,13 +1,13 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 
 $appDirectory = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $interpreter = Join-Path $appDirectory '.venv\Scripts\pythonw.exe'
 $entrypoint = Join-Path $appDirectory 'CodexMeter.pyw'
 if (-not (Test-Path -LiteralPath $interpreter -PathType Leaf)) {
-    throw 'Run uv sync --locked --python 3.11 in the CodexMeter directory first.'
+    throw '先にCodexMeterフォルダで uv sync --locked --python 3.11 を実行してください。'
 }
 if (-not (Test-Path -LiteralPath $entrypoint -PathType Leaf)) {
-    throw 'CodexMeter.pyw was not found.'
+    throw 'CodexMeter.pywが見つかりません。'
 }
 
 $startupDirectory = [Environment]::GetFolderPath('Startup')
@@ -17,7 +17,7 @@ $shortcut = $shell.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = $interpreter
 $shortcut.Arguments = '"{0}"' -f $entrypoint
 $shortcut.WorkingDirectory = $appDirectory
-$shortcut.Description = 'Codex Meter tray monitor'
+$shortcut.Description = 'Codexの利用枠を表示するトレイアプリ'
 $shortcut.WindowStyle = 7
 $shortcut.Save()
-Write-Output "Startup shortcut installed: $shortcutPath"
+Write-Output "自動起動のショートカットを設定しました: $shortcutPath"

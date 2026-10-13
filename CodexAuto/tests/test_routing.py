@@ -17,6 +17,18 @@ def turn(identifier, text, thread="thread-1"):
 
 
 class TurnRoutingTests(unittest.TestCase):
+    def test_session_picker_deduplicates_ids_not_names_without_changing_cursor(self):
+        router = TurnRouter(MODELS)
+        router.client_message({"id": 1, "method": "thread/list", "params": {"limit": 25}})
+        first = {"id": "one", "name": "same title", "updatedAt": 100}
+        second = {"id": "two", "name": "same title", "updatedAt": 90}
+        message = {"id": 1, "result": {"data": [first, second, dict(first), dict(first)],
+                                       "nextCursor": "opaque-cursor"}}
+        router.server_message(message)
+        self.assertEqual(message["result"]["data"], [first, second])
+        self.assertEqual(message["result"]["nextCursor"], "opaque-cursor")
+        self.assertNotIn(1, router.pending)
+
     def test_banned_startup_and_menu_models_are_rejected(self):
         for model in cli.BANNED_MODELS:
             with self.assertRaises(cli.RoutingError):
