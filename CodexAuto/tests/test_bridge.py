@@ -19,6 +19,31 @@ ECHO = "import sys\nfor line in sys.stdin:\n sys.stdout.write(line)\n sys.stdout
 
 
 class BridgeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_resume_picker_can_connect_repeatedly_without_closing_main(self):
+        router = TurnRouter(MODELS)
+        router.remember("main", "user", "main history")
+        bridge = Bridge([sys.executable, "-u", "-c", ECHO], router, "secret")
+        async with serve(bridge.handler, "127.0.0.1", 0, process_request=bridge.authenticate,
+                         close_timeout=1) as server:
+            address = f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}"
+            headers = {"Authorization": "Bearer secret"}
+            async with connect(address, additional_headers=headers, proxy=None) as main:
+                request = {"id": 1, "method": "initialize", "params": {}}
+                await main.send(json.dumps(request))
+                self.assertEqual(json.loads(await main.recv()), request)
+                for _ in range(2):
+                    async with connect(address, additional_headers=headers, proxy=None) as picker:
+                        # Native clients independently reuse the same RPC IDs.
+                        await picker.send(json.dumps(request))
+                        self.assertEqual(json.loads(await picker.recv()), request)
+                        listing = {"id": 2, "method": "thread/list", "params": {}}
+                        await picker.send(json.dumps(listing))
+                        self.assertEqual(json.loads(await picker.recv()), listing)
+                    await main.send(json.dumps(request))
+                    self.assertEqual(json.loads(await main.recv()), request)
+                self.assertEqual(list(router.history("main")), [("user", "main history")])
+        self.assertFalse(bridge.connections)
+
     async def test_actual_transport_routes_multiple_turns_and_forwards_approvals(self):
         router = TurnRouter(MODELS)
         bridge = Bridge([sys.executable, "-u", "-c", ECHO], router, "test-secret")

@@ -45,9 +45,11 @@
 - Display fresh Codex Meter quota observations when available; do not reduce difficult-task quality solely because quota is low.
 - Limit Ollaya connections to loopback, disable proxies/redirects, and start a missing local server without visible console windows.
 - Install with uv in an isolated tool environment.
-- Use a per-session authenticated loopback bridge and private stdio App Server instead of the shared daemon. Reject browser/external/extra client connections and clean up only owned child processes on exit.
+- Use a per-session authenticated loopback bridge and private stdio App Server instead of the shared daemon. Reject browser/external/unauthenticated connections; allow up to four isolated authenticated connections for native session pickers. Clean up only owned child processes on exit.
 
 ## Changes
+
+- 2026-10-13: Allow authenticated auxiliary connections for the native `/resume` picker, with separate request IDs/history and bounded connection count.
 
 - 2026-10-13: Enforce the user's Astra and GPT-6 Sol prohibition in Codex Auto; route investigation and failed judgments to GPT-6.1 Sol/high.
 

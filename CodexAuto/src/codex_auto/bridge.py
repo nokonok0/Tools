@@ -12,6 +12,7 @@ from websockets.asyncio.server import serve
 from websockets.exceptions import ConnectionClosed
 
 from .cli import RoutingError, build_command, hidden_flags
+from .routing import TurnRouter
 
 MAX_MESSAGE = 16 * 1024 * 1024
 TOKEN_ENV = "CODEX_AUTO_SESSION_TOKEN"
@@ -78,6 +79,7 @@ class Bridge:
         self.router = router
         self.token = token
         self.claimed = False
+        self.connections = set()
 
     def authenticate(self, connection, request):
         authorization = request.headers.get_all("Authorization")
@@ -85,11 +87,16 @@ class Bridge:
             return connection.respond(HTTPStatus.FORBIDDEN, "Forbidden\n")
         if len(authorization) != 1 or not secrets.compare_digest(authorization[0], "Bearer " + self.token):
             return connection.respond(HTTPStatus.UNAUTHORIZED, "Unauthorized\n")
-        if self.claimed:
-            return connection.respond(HTTPStatus.CONFLICT, "Session already connected\n")
-        self.claimed = True
+        if len(self.connections) >= 4:
+            return connection.respond(HTTPStatus.TOO_MANY_REQUESTS, "Too many session connections\n")
+        self.connections.add(connection)
 
     async def handler(self, connection):
+        # The native /resume picker opens an auxiliary connection. Keep its
+        # request IDs and history separate from the active conversation.
+        router = self.router if not self.claimed else TurnRouter(
+            self.router.models, self.router.timeout, self.router.fixed_model, self.router.fixed_effort)
+        self.claimed = True
         backend = None
         tasks = []
         try:
@@ -109,10 +116,10 @@ class Bridge:
                     if not isinstance(message, dict):
                         raise RoutingError("JSON-RPCメッセージの形式が正しくありません")
                     try:
-                        changed, decision = await asyncio.to_thread(self.router.client_message, message)
+                        changed, decision = await asyncio.to_thread(router.client_message, message)
                     except RoutingError as exc:
                         if "id" in message:
-                            self.router.pending.pop(message["id"], None)
+                            router.pending.pop(message["id"], None)
                             await connection.send(json.dumps({"id": message["id"], "error": {
                                 "code": -32602, "message": str(exc)}}))
                             continue
@@ -127,7 +134,7 @@ class Bridge:
             async def outbound():
                 while raw := await backend.stdout.readline():
                     message = json.loads(raw)
-                    self.router.server_message(message)
+                    router.server_message(message)
                     await connection.send(json.dumps(message, ensure_ascii=False))
 
             tasks = [asyncio.create_task(inbound()), asyncio.create_task(outbound())]
@@ -144,6 +151,7 @@ class Bridge:
             await asyncio.gather(*tasks, return_exceptions=True)
             if backend:
                 await stop_process(backend)
+            self.connections.discard(connection)
 
 
 async def run_session(prefix, boot_model, effort, prompt, tail, manual, router):
