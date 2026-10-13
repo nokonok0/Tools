@@ -292,17 +292,24 @@ def quota_summary():
         return {}
 
 
-def build_command(prefix, model, effort, prompt, tail, manual_options):
+def build_command(prefix, model, effort, prompt, tail, manual_options, no_daemon=True):
     command = list(prefix)
     if "model" not in manual_options:
         command += ["--model", model]
     if effort and "model_reasoning_effort" not in manual_options:
         command += ["-c", "model_reasoning_effort=" + json.dumps(effort)]
     command += tail
-    if "--no-daemon" not in tail:
+    if no_daemon and "--no-daemon" not in tail:
         command.append("--no-daemon")
     command += ["--", prompt]
     return command
+
+
+def print_remaining(remaining):
+    if remaining:
+        names = {"primary": "短期", "secondary": "週間"}
+        summary = " / ".join(f"{names[key]} {value:g}%" for key, value in remaining.items())
+        print(f"[codex-auto] 残量: {summary}", file=sys.stderr)
 
 
 def main(argv=None):
@@ -317,8 +324,8 @@ def main(argv=None):
     if "--" in raw:
         separator = raw.index("--")
         raw, tail = raw[:separator], raw[separator + 1:]
-    parser = argparse.ArgumentParser(prog="codex-auto", description="Ollayaでモデルを選び、通常のCodex CLIを起動します。選択は起動時の一度だけです。")
-    parser.add_argument("prompt", nargs="?", help="依頼文。省略時は入力、- は標準入力")
+    parser = argparse.ArgumentParser(prog="codex-auto", description="Ollayaで送信ごとにモデルを選び、標準Codex CLIを使います。")
+    parser.add_argument("prompt", nargs="?", help="最初の依頼文。省略時は標準CLIの入力欄、- は標準入力")
     parser.add_argument("--model", "-m", help="手動指定。Ollayaによる選択を省略")
     parser.add_argument("--effort", choices=EFFORTS, help="推論設定の手動指定")
     parser.add_argument("--dry-run", action="store_true", help="選択結果だけ確認。Codexを起動しない")
@@ -350,12 +357,28 @@ def main(argv=None):
         prompt = args.prompt
         if prompt == "-":
             prompt = sys.stdin.read()
-        elif prompt is None:
+        elif prompt is None and args.dry_run:
             if not sys.stdin.isatty():
                 raise RoutingError("依頼文を引数に指定するか、- で標準入力を渡してください")
             prompt = input("依頼: ")
-        if not prompt.strip():
+        if prompt is not None and not prompt.strip():
             raise RoutingError("依頼文が空です")
+        if not args.dry_run:
+            import asyncio
+            from .bridge import run_session
+            from .routing import TurnRouter
+
+            provider = manual.get("provider") or settings.get("model_provider") or "openai"
+            if not explicit and provider not in ("openai", "openai_chatgpt_plan"):
+                raise RoutingError("このプロバイダーでは--modelで指定してください")
+            models = {} if explicit else catalog(settings)
+            boot_model = explicit or choose_model(models, "implementation", effort)[0]
+            if not boot_model or boot_model.startswith("-") or any(c.isspace() for c in boot_model):
+                raise RoutingError("モデル名の形式が正しくありません")
+            router = TurnRouter(models, args.timeout, explicit, effort)
+            print("[codex-auto] 送信ごとに自動選択。共有daemonは使用しません。", file=sys.stderr)
+            print_remaining(quota_summary())
+            return asyncio.run(run_session(prefix, boot_model, effort, prompt, tail, manual, router))
         confidence = None
         if explicit:
             model = explicit
@@ -379,16 +402,9 @@ def main(argv=None):
             print(json.dumps(result, ensure_ascii=False))
         else:
             print(f"[codex-auto] {model} / {effort or '既定の推論設定'} · {reason}", file=sys.stderr)
-            if result["remaining_percent"]:
-                names = {"primary": "短期", "secondary": "週間"}
-                summary = " / ".join(f"{names[key]} {value:g}%" for key, value in result["remaining_percent"].items())
-                print(f"[codex-auto] 残量: {summary}", file=sys.stderr)
+            print_remaining(result["remaining_percent"])
         if args.dry_run:
             return 0
-        command = build_command(prefix, model, effort, prompt, tail, manual)
-        # Inherit the user's terminal and directory. Never interpolate a prompt
-        # into cmd.exe/PowerShell, and leave approval/sandbox choices to Codex.
-        return subprocess.call(command)
     except KeyboardInterrupt:
         return 130
     except (RoutingError, OSError, ValueError, TypeError) as exc:

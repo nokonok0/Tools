@@ -1,9 +1,9 @@
 [project]
 name = "codex-auto"
-version = "0.1.0"
-description = "Select a Codex CLI model with a local Ollaya decision model"
+version = "0.2.0"
+description = "Route Codex CLI turns with a local Ollaya decision model"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["websockets>=15,<16"]
 
 [project.scripts]
 codex-auto = "codex_auto.cli:main"

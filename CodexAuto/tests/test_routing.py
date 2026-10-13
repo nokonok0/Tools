@@ -1,0 +1,103 @@
+from copy import deepcopy
+import unittest
+from unittest.mock import patch
+
+from codex_auto import cli
+from codex_auto.routing import TurnRouter
+from test_cli import MODELS, response
+
+
+def turn(identifier, text, thread="thread-1"):
+    return {"id": identifier, "method": "turn/start", "params": {
+        "threadId": thread, "input": [{"type": "text", "text": text}],
+        "model": "gpt-6.1-sol", "effort": "low", "approvalPolicy": "on-request",
+        "sandboxPolicy": {"type": "readOnly"},
+        "collaborationMode": {"mode": "default", "settings": {
+            "model": "gpt-6.1-sol", "reasoning_effort": "low", "developer_instructions": None}}}}
+
+
+class TurnRoutingTests(unittest.TestCase):
+    def test_each_turn_changes_model_without_changing_thread_or_permissions(self):
+        router = TurnRouter(MODELS)
+        with patch.object(cli.Ollaya, "decide", side_effect=[response("routine"), response("implementation"), response("investigation")]) as decide:
+            for identifier, model in enumerate(("gpt-6-luna", "gpt-6.1-sol", "gpt-6-astra"), 1):
+                original = turn(identifier, f"task-{identifier}")
+                before = deepcopy(original)
+                changed, result = router.client_message(original)
+                self.assertEqual(original, before)
+                self.assertEqual(changed["params"]["model"], model)
+                self.assertEqual(changed["params"]["collaborationMode"]["settings"]["model"], model)
+                self.assertEqual(changed["params"]["threadId"], "thread-1")
+                self.assertEqual(changed["params"]["sandboxPolicy"], original["params"]["sandboxPolicy"])
+                self.assertEqual(changed["params"]["approvalPolicy"], "on-request")
+                router.server_message({"id": identifier, "result": {"turn": {"id": str(identifier)}}})
+            self.assertEqual(decide.call_count, 3)
+            self.assertIn("task-1", decide.call_args.args[0])
+            self.assertIn("task-3", decide.call_args.args[0])
+
+    def test_history_is_bounded_and_isolated_per_thread(self):
+        router = TurnRouter(MODELS)
+        for _ in range(10):
+            router.remember("one", "assistant", "x" * 10000)
+        self.assertEqual(len(router.history("one")), 4)
+        self.assertLess(sum(len(text) for _, text in router.history("one")), 1300)
+        with patch.object(cli.Ollaya, "decide", return_value=response()) as decide:
+            router.client_message(turn(1, "new", "two"))
+        self.assertEqual(decide.call_args.args[0], "new")
+        for identifier in range(100):
+            router.remember(str(identifier), "user", "short")
+        self.assertEqual(len(router.histories), 16)
+
+    def test_failed_turn_is_not_added_and_steering_is_not_rewritten(self):
+        router = TurnRouter(MODELS)
+        with patch.object(cli.Ollaya, "decide", return_value=response()) as decide:
+            router.client_message(turn(1, "failed"))
+            router.server_message({"id": 1, "error": {"message": "failure"}})
+            self.assertFalse(router.history("thread-1"))
+            steer = {"id": 2, "method": "turn/steer", "params": {
+                "threadId": "thread-1", "input": [{"type": "text", "text": "changed"}]}}
+            self.assertEqual(router.client_message(steer), (steer, None))
+            self.assertEqual(decide.call_count, 1)
+
+    def test_resume_history_and_final_reply_are_used(self):
+        router = TurnRouter(MODELS)
+        router.client_message({"id": 1, "method": "thread/resume", "params": {"threadId": "t"}})
+        router.server_message({"id": 1, "result": {"thread": {"id": "t", "turns": [{"items": [
+            {"type": "userMessage", "content": [{"type": "text", "text": "migration"}]},
+            {"type": "agentMessage", "text": "confirm plan"}]}]}}})
+        router.server_message({"method": "item/completed", "params": {"threadId": "t", "item": {
+            "type": "agentMessage", "text": "new reply", "phase": "final_answer"}}})
+        with patch.object(cli.Ollaya, "decide", return_value=response()) as decide:
+            router.client_message(turn(2, "yes", "t"))
+        self.assertIn("migration", decide.call_args.args[0])
+        self.assertIn("new reply", decide.call_args.args[0])
+
+    def test_startup_manual_and_successful_model_menu_changes_are_respected(self):
+        router = TurnRouter(MODELS, model="custom", effort="high")
+        with patch.object(cli.Ollaya, "decide") as decide:
+            changed, _ = router.client_message(turn(1, "task"))
+            self.assertEqual(changed["params"]["model"], "custom")
+            decide.assert_not_called()
+        router = TurnRouter(MODELS)
+        router.current["thread-1"] = ("gpt-6-luna", "low")
+        request = {"id": 5, "method": "thread/settings/update", "params": {
+            "threadId": "thread-1", "model": "gpt-6-astra", "effort": "high"}}
+        router.client_message(request)
+        router.server_message({"id": 5, "result": {}})
+        with patch.object(cli.Ollaya, "decide") as decide:
+            changed, _ = router.client_message(turn(6, "task"))
+            self.assertEqual(changed["params"]["model"], "gpt-6-astra")
+            decide.assert_not_called()
+
+    def test_images_and_unavailable_classifier_use_high_model(self):
+        router = TurnRouter(MODELS)
+        message = turn(1, "inspect this")
+        message["params"]["input"].append({"type": "localImage", "path": "PRIVATE.png"})
+        with patch.object(cli.Ollaya, "decide") as decide:
+            changed, _ = router.client_message(message)
+            self.assertEqual(changed["params"]["model"], "gpt-6-astra")
+            decide.assert_not_called()
+        with patch.object(cli.Ollaya, "decide", side_effect=TimeoutError):
+            changed, result = router.client_message(turn(2, "new task"))
+            self.assertEqual(result["source"], "fallback")
+            self.assertEqual(changed["params"]["model"], "gpt-6-astra")

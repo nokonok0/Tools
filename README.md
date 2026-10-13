@@ -6,7 +6,7 @@ Windowsで日常的に使う小さなツールをまとめたリポジトリで�
 | --- | --- | --- |
 | [FloatingEditKeys](FloatingEditKeys/) | マウスの右長押しで呼び出す編集キーウィジェット | [操作・導入方法](FloatingEditKeys/README.md) |
 | [Codex Meter](CodexMeter/) | Codexの残量と、モデル・推論設定別の上限までの推定時間を表示するトレイアプリ | [起動・計算方法](CodexMeter/README.md) |
-| [Codex Auto](CodexAuto/) | Ollayaで依頼を判定し、モデル・推論設定を選んで通常のCodex CLIを起動 | [導入・使い方](CodexAuto/README.md) |
+| [Codex Auto](CodexAuto/) | 標準Codex CLIで、送信ごとにOllayaがモデル・推論設定を自動選択 | [導入・使い方](CodexAuto/README.md) |
 
 各ツールは個別に起動できます。必要な環境・導入手順・操作方法は、一覧の個別READMEを参照してください。
 

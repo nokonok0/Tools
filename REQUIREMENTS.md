@@ -35,17 +35,20 @@
 
 ## Codex Auto
 
-- Provide a `codex-auto` command that classifies the initial request locally with an installed Ollaya model and launches the ordinary Codex CLI.
+- Provide a `codex-auto` command that uses the standard Codex TUI and classifies every new turn locally with an installed Ollaya model.
 - Select a model and supported reasoning setting from the local Codex catalog; preserve explicit user overrides.
 - Route uncertain, high-impact, truncated or failed judgments toward a stronger available model. Do not automatically download decision models.
-- Select once at startup. Preserve the user's terminal, current directory, approval/sandbox settings and child exit status.
-- Pass requests as literal argv values with no shell interpolation. Store no request or decision history.
+- Preserve the same thread while routing each `turn/start`; preserve terminal, directory, approval/sandbox settings, collaboration instructions, attachments and child exit status. Do not change the active model for mid-turn steering.
+- Pass requests as literal argv/JSON values with no shell interpolation. Store no request or decision history; retain bounded recent conversation excerpts only in memory.
 - Offer dry-run, JSON output without the request, model listing, and native Codex option passthrough after `--`.
 - Display fresh Codex Meter quota observations when available; do not reduce difficult-task quality solely because quota is low.
 - Limit Ollaya connections to loopback, disable proxies/redirects, and start a missing local server without visible console windows.
 - Install with uv in an isolated tool environment.
+- Use a per-session authenticated loopback bridge and private stdio App Server instead of the shared daemon. Reject browser/external/extra client connections and clean up only owned child processes on exit.
 
 ## Changes
+
+- 2026-10-13: Replace startup-only routing with per-turn routing in the standard CLI, using bounded conversation context and a private authenticated App Server bridge. Verify two completed turns in one thread with different models.
 
 - 2026-10-13: Translate the Codex Meter README into Japanese while preserving setup, calculation limits and privacy guidance.
 
