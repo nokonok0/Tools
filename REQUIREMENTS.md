@@ -47,6 +47,8 @@
 
 ## Changes
 
+- 2026-10-13: Translate the Codex Meter README into Japanese while preserving setup, calculation limits and privacy guidance.
+
 - 2026-10-13: Keep the root README as a tool index with shared guidance; leave tool-specific setup and verification in individual READMEs.
 
 - 2026-10-13: Default Codex Auto interactive launches to `--no-daemon` without changing ordinary Codex configuration.

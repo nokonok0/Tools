@@ -1,28 +1,59 @@
 # Codex Meter
 
-Windows tray application showing observed Codex quotas and empirical per-model runway estimates.
+Codexの利用枠の残量と、モデル・推論設定ごとの実測に基づく「上限までの推定時間」を表示するWindows用トレイアプリです。
 
-## Run
+## 導入・起動
 
-Requires Windows, Python 3.11+ and uv. From this directory run `uv sync --locked --python 3.11` once to create the isolated `.venv` from `uv.lock`, then double-click `CodexMeter.pyw`. The launcher uses that environment automatically without running uv or installing packages at each launch. It starts in the system tray without a taskbar window. Hover for remaining quotas, reset countdowns and the latest model's short-term estimate. Click to toggle a compact panel near the taskbar on the current monitor. Clicking outside the panel, Escape or closing it hides it. Right-click for Show/Hide, Refresh and Quit. A second launch opens the existing panel through a named event. Without pystray, the window still works and closing it exits.
+Windows、Python 3.11以降、uvが必要です。このフォルダで一度だけ次を実行します。
 
-To start automatically at Windows sign-in, run `powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Install-Startup.ps1` after setup. It creates a per-user `Codex Meter.lnk` startup shortcut pointing directly to `.venv\Scripts\pythonw.exe`, so no terminal window or package synchronization runs during sign-in. After moving this directory, rerun the installer to update the shortcut. Delete that shortcut from the Windows Startup folder to disable automatic launch.
+```powershell
+uv sync --locked --python 3.11
+```
 
-Fresh remaining quotas at 20% and 10% trigger a tray notification, at most once per threshold and reset window. Notification deduplication is stored in `%LOCALAPPDATA%\CodexMeter\notifications.json`. Windows notification settings control whether notifications are visible. Stale or expired observations do not notify.
+`uv.lock`に基づいて専用環境`.venv`が作られます。その後は`CodexMeter.pyw`をダブルクリックしてください。起動のたびにuvを実行したり、パッケージをインストールしたりすることはありません。
 
-## Data and estimates
+通常のウィンドウやタスクバー項目は表示せず、時計横のトレイに常駐します。
 
-- Reads the existing Codex session logs in `%CODEX_HOME%\sessions` or `%USERPROFILE%\.codex\sessions`. No API key, network calls, credential reads, CLI launches, MCP servers or inference requests.
-- Quotas are account/bucket-wide, not a separate balance for every model. Estimates show how long the latest shared balance would last if only that model and reasoning setting were used continuously at its observed rate.
-- Initial reads are bounded to the last 1 MiB of each of at most 64 recently modified logs; subsequent polls read only appended bytes, at most 2 MiB per file per poll. Polls run every 10 seconds in a background thread; file discovery runs once a minute.
-- Per-model attribution requires exactly one known active turn throughout the observation interval. Mixed or concurrent turns, unknown model contexts, gaps over 180 seconds, quota resets, decreases, expired windows and missing data are excluded. If the 64-file discovery limit is exceeded, prediction is disabled rather than attributing incomplete data.
-- A rate requires at least 3 minutes, 5 intervals and 3 percentage points of observed consumption. Zero-change intervals are included. The displayed range accounts only for rounded quota percentages; changing task complexity can cause larger variation. Estimates are empirical, not guarantees.
-- An uncompleted/abandoned task is considered inactive three minutes after its last observed event. New activity extends that bound. Other devices and cloud work are not observable from these local logs, so their account-wide consumption can affect attribution and estimates.
-- Usage logs update during Codex activity. After five minutes without a quota observation, predictions show Update Pending. Passed reset times also show Update Pending; the app does not guess a new quota balance.
-- Only whitelisted model names, reasoning levels, timestamps, task boundaries, bucket identifiers and quota counters are persisted in `%LOCALAPPDATA%\CodexMeter\observations.json`. No conversation, code, paths, credentials or account IDs are stored. Session file paths are hashed. Retention is seven days or 24,000 events. Writes are atomic and occur at most every two minutes, plus exit.
-- Raw logs may contain conversations, but parsing retains only the listed structured metadata. Existing Codex files are never edited.
-- A missing short-term or weekly bucket stays unavailable. Custom-provider usage without Codex quota snapshots is not estimated.
+- アイコンにマウスを重ねると、残量・リセットまでの時間・直近モデルの短期枠の推定時間を表示します。
+- クリックすると、現在のモニターのタスクバー付近に小さなパネルを表示・非表示にします。
+- パネルの外をクリックする、Escapeを押す、またはパネルを閉じると非表示になります。
+- 右クリックメニューから表示・非表示、更新、終了を操作できます。
+- 再度起動した場合は、重複起動せず既存のパネルを表示します。
+- pystrayがない環境では通常のウィンドウとして動作し、閉じると終了します。
 
-Run the focused checks with `uv run --locked python -m unittest discover -s tests`.
+## 自動起動・通知
 
-Protocol reference: https://learn.chatgpt.com/docs/app-server (account/rateLimits/read, quota window semantics).
+Windowsへのサインイン時に自動起動する場合は、導入後に次を実行します。
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Install-Startup.ps1
+```
+
+ユーザーのスタートアップフォルダに、`.venv\Scripts\pythonw.exe`を直接起動する`Codex Meter.lnk`を作成します。サインイン時にターミナルやパッケージの同期処理は起動しません。アプリのフォルダを移動した場合は再実行してください。自動起動を無効にするには、スタートアップフォルダのこのショートカットを削除します。
+
+最新の観測値で残量が20%・10%以下になると、トレイ通知を表示します。各閾値・リセット期間につき一度だけ通知し、重複防止情報は`%LOCALAPPDATA%\CodexMeter\notifications.json`に保存します。通知の表示可否はWindowsの通知設定にも依存します。古い観測値や期限切れの利用枠では通知しません。
+
+## データと推定方法
+
+- `%CODEX_HOME%\sessions`、未指定なら`%USERPROFILE%\.codex\sessions`の既存セッションログを読み取ります。APIキー、ネットワーク通信、認証情報の読み取り、CLI起動、MCPサーバー、推論リクエストは使いません。
+- 利用枠はアカウント・枠全体で共有され、モデルごとの独立した残高ではありません。推定時間は「そのモデルと推論設定だけを、観測された消費速度で連続使用した場合、現在の共有残量があとどれだけ持つか」を表します。
+- 初回は最近更新された最大64ファイルについて、それぞれ末尾1 MiBまで読み取ります。その後は追記分だけを、1ファイル・1回につき最大2 MiBまで読み取ります。バックグラウンドで10秒ごとに確認し、ファイル一覧は1分ごとに更新します。
+- モデル別の消費量は、観測区間全体で既知の作業がちょうど一つだけ実行中の場合に算出します。混在・並行作業、モデル不明、180秒超の観測間隔、利用枠のリセット、消費率の減少、期限切れ、データ欠落は除外します。対象が64ファイルを超える場合は、不完全なデータから推定せず予測を停止します。
+- 消費速度の算出には、実測3分以上・5区間以上・3パーセントポイント以上の消費が必要です。消費率が変化しない区間も含めます。表示する推定範囲は残量のパーセント表示の丸めだけを考慮しており、作業の複雑さによってさらに変動します。実測に基づく目安であり、保証ではありません。
+- 完了しなかった作業は、最後の観測イベントから3分経過すると実行中ではないと扱います。新しい活動があれば期限を延長します。他の端末やクラウドでの作業はローカルログから観測できないため、その消費がモデル別の算出や予測に影響する場合があります。
+- ログはCodexの活動中に更新されます。利用枠の観測が5分間ない場合、推定は「更新待ち」になります。リセット予定時刻を過ぎた場合も「更新待ち」とし、新しい残量を勝手に仮定しません。
+- 短期枠・週間枠のデータがない場合は、利用可能な値として表示しません。Codexの利用枠の観測値がない独自プロバイダーの使用量は推定しません。
+
+## 保存情報・プライバシー
+
+`%LOCALAPPDATA%\CodexMeter\observations.json`に保存するのは、許可したモデル名、推論設定、時刻、作業の開始・終了、利用枠の識別子、消費率などの観測情報だけです。会話本文、コード、パス、認証情報、アカウントIDは保存しません。セッションファイルのパスはハッシュ化します。
+
+保存上限は7日間または24,000イベントです。保存は原子的な書き込みで行い、最大2分に一度と終了時に実施します。元のログには会話が含まれる場合がありますが、取り込むのは上記の構造化された情報だけです。既存のCodexファイルは変更しません。
+
+## 確認
+
+```powershell
+uv run --locked python -m unittest discover -s tests
+```
+
+仕様の参考: [Codex App Server](https://learn.chatgpt.com/docs/app-server)（`account/rateLimits/read`と利用枠の期間の扱い）。
