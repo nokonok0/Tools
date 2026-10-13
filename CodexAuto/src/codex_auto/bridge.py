@@ -110,11 +110,11 @@ class Bridge:
                         raise RoutingError("JSON-RPCメッセージの形式が正しくありません")
                     try:
                         changed, decision = await asyncio.to_thread(self.router.client_message, message)
-                    except RoutingError:
+                    except RoutingError as exc:
                         if "id" in message:
                             self.router.pending.pop(message["id"], None)
                             await connection.send(json.dumps({"id": message["id"], "error": {
-                                "code": -32602, "message": "自動選択を適用できません。モデル指定と一覧を確認してください。"}}))
+                                "code": -32602, "message": str(exc)}}))
                             continue
                         raise
                     if decision and decision["source"] == "fallback":
@@ -128,7 +128,7 @@ class Bridge:
                 while raw := await backend.stdout.readline():
                     message = json.loads(raw)
                     self.router.server_message(message)
-                    await connection.send(raw.decode("utf-8").rstrip("\r\n"))
+                    await connection.send(json.dumps(message, ensure_ascii=False))
 
             tasks = [asyncio.create_task(inbound()), asyncio.create_task(outbound())]
             done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)

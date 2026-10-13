@@ -41,7 +41,9 @@ Get-Content -Raw -Encoding UTF8 request.txt | codex-auto -
 | --- | --- | --- |
 | 翻訳・形式変換などの定型作業 | GPT-6 Luna | low |
 | コード修正・機能追加 | GPT-6.1 Sol | medium |
-| 原因調査・設計・研究、重要データ等への影響、曖昧な判定 | GPT-6 Astra | high |
+| 原因調査・設計・研究、重要データ等への影響、曖昧な判定 | GPT-6.1 Sol | high |
+
+`gpt-6-astra`（Astra）と`gpt-6-sol`（6 Sol）は使用禁止です。自動選択・代替候補・モデル一覧から除外し、起動時やCLIのモデル変更での手動指定も拒否します。`gpt-6.1-sol`（6.1 Sol）は使用できます。
 
 Codexの設定で指定されたモデル一覧、またはローカルの`models_cache.json`に存在するモデルと推論設定を選びます。一覧は利用権限の保証ではなく、実際の実行時にはCodexの認証・プランによる制約が適用されます。上位モデルが一覧にない場合はSol/highなどの候補を使います。自動選択ではultraを選びません。
 

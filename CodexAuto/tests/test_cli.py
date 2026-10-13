@@ -26,6 +26,31 @@ def response(kind="routine", confidence=.99, risk=.05, truncated=False):
 
 
 class RoutingTests(unittest.TestCase):
+    def test_banned_models_cannot_be_manual_or_fallback_choices(self):
+        banned = {name: {"efforts": ["low", "medium", "high"], "default": "low"}
+                  for name in cli.BANNED_MODELS}
+        for kind in cli.KINDS:
+            with self.assertRaises(cli.RoutingError):
+                cli.choose_model(banned, kind)
+        for model in cli.BANNED_MODELS:
+            for tail in (["--model", model], ["--config", f'model="{model}"']):
+                with patch.object(cli, "native_codex", return_value=["codex.exe"]), \
+                     patch.object(cli, "configuration", return_value=({}, cli.overrides(tail))), \
+                     patch.object(cli.subprocess, "call") as execute, \
+                     contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(cli.main(["--dry-run", "task", "--", *tail]), 2)
+                    execute.assert_not_called()
+            with self.assertRaises(cli.RoutingError):
+                cli.build_command(["codex.exe"], model, "low", "task", [], {})
+
+    def test_local_catalog_excludes_banned_models(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "models.json"
+            path.write_text(json.dumps({"models": [{"slug": name} for name in
+                            (*cli.BANNED_MODELS, "gpt-6.1-sol", "gpt-6-luna")]}))
+            self.assertEqual(set(cli.catalog({"model_catalog_json": str(path)})),
+                             {"gpt-6.1-sol", "gpt-6-luna"})
+
     def test_no_daemon_is_default_without_duplicate_flags(self):
         for tail in ([], ["--no-daemon"], ["--sandbox", "read-only"]):
             command = cli.build_command(["codex.exe"], "model", "high", "task", tail, {})
@@ -47,7 +72,7 @@ class RoutingTests(unittest.TestCase):
                 self.assertEqual(cli.native_codex(), [paths["node.exe"], str(entry)])
 
     def test_three_roles_and_uncertainty_guard(self):
-        for kind, expected in zip(cli.KINDS, ("gpt-6-luna", "gpt-6.1-sol", "gpt-6-astra")):
+        for kind, expected in zip(cli.KINDS, ("gpt-6-luna", "gpt-6.1-sol", "gpt-6.1-sol")):
             assessed = cli.assess(response(kind))
             self.assertEqual(cli.choose_model(MODELS, assessed[0])[0], expected)
         self.assertEqual(cli.assess(response(confidence=.4))[0], "investigation")
@@ -92,7 +117,7 @@ class RoutingTests(unittest.TestCase):
              patch.object(cli.Ollaya, "decide", side_effect=TimeoutError), \
              patch.object(cli.subprocess, "call") as execute, contextlib.redirect_stdout(output):
             self.assertEqual(cli.main(["--dry-run", "--json", "task"]), 0)
-        self.assertEqual(json.loads(output.getvalue())["model"], "gpt-6-astra")
+        self.assertEqual(json.loads(output.getvalue())["model"], "gpt-6.1-sol")
         execute.assert_not_called()
 
     def test_passthrough_manual_config_and_conflicts(self):

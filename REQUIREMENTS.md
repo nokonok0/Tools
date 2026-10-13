@@ -37,6 +37,7 @@
 
 - Provide a `codex-auto` command that uses the standard Codex TUI and classifies every new turn locally with an installed Ollaya model.
 - Select a model and supported reasoning setting from the local Codex catalog; preserve explicit user overrides.
+- Prohibit `gpt-6-astra` and `gpt-6-sol` in routing, fallback, startup overrides and native model-setting requests; omit them from model lists. Keep `gpt-6.1-sol` available and use it for demanding tasks.
 - Route uncertain, high-impact, truncated or failed judgments toward a stronger available model. Do not automatically download decision models.
 - Preserve the same thread while routing each `turn/start`; preserve terminal, directory, approval/sandbox settings, collaboration instructions, attachments and child exit status. Do not change the active model for mid-turn steering.
 - Pass requests as literal argv/JSON values with no shell interpolation. Store no request or decision history; retain bounded recent conversation excerpts only in memory.
@@ -47,6 +48,8 @@
 - Use a per-session authenticated loopback bridge and private stdio App Server instead of the shared daemon. Reject browser/external/extra client connections and clean up only owned child processes on exit.
 
 ## Changes
+
+- 2026-10-13: Enforce the user's Astra and GPT-6 Sol prohibition in Codex Auto; route investigation and failed judgments to GPT-6.1 Sol/high.
 
 - 2026-10-13: Replace startup-only routing with per-turn routing in the standard CLI, using bounded conversation context and a private authenticated App Server bridge. Verify two completed turns in one thread with different models.
 

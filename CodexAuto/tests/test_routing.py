@@ -17,10 +17,35 @@ def turn(identifier, text, thread="thread-1"):
 
 
 class TurnRoutingTests(unittest.TestCase):
+    def test_banned_startup_and_menu_models_are_rejected(self):
+        for model in cli.BANNED_MODELS:
+            with self.assertRaises(cli.RoutingError):
+                TurnRouter(MODELS, model=model)
+            router = TurnRouter(MODELS)
+            for method in ("thread/start", "thread/resume", "thread/settings/update", "turn/settings/update"):
+                for params in ({"model": model}, {"collaborationMode": {"settings": {"model": model}}}):
+                    with self.assertRaises(cli.RoutingError):
+                        router.client_message({"id": 1, "method": method, "params": params})
+            self.assertFalse(router.pending)
+
+    def test_remote_model_list_is_filtered_without_touching_other_responses(self):
+        router = TurnRouter(MODELS)
+        router.client_message({"id": 1, "method": "model/list", "params": {}})
+        message = {"id": 1, "result": {"data": [
+            {"id": "a", "model": "gpt-6-astra"}, {"id": "b", "model": "gpt-6-sol"},
+            {"id": "c", "model": "gpt-6.1-sol"}], "nextCursor": "cursor"}}
+        router.server_message(message)
+        self.assertEqual(message["result"]["data"], [{"id": "c", "model": "gpt-6.1-sol"}])
+        self.assertEqual(message["result"]["nextCursor"], "cursor")
+        other = {"id": 2, "result": {"data": [{"id": "gpt-6-astra"}]}}
+        before = deepcopy(other)
+        router.server_message(other)
+        self.assertEqual(other, before)
+
     def test_each_turn_changes_model_without_changing_thread_or_permissions(self):
         router = TurnRouter(MODELS)
         with patch.object(cli.Ollaya, "decide", side_effect=[response("routine"), response("implementation"), response("investigation")]) as decide:
-            for identifier, model in enumerate(("gpt-6-luna", "gpt-6.1-sol", "gpt-6-astra"), 1):
+            for identifier, model in enumerate(("gpt-6-luna", "gpt-6.1-sol", "gpt-6.1-sol"), 1):
                 original = turn(identifier, f"task-{identifier}")
                 before = deepcopy(original)
                 changed, result = router.client_message(original)
@@ -81,12 +106,12 @@ class TurnRoutingTests(unittest.TestCase):
         router = TurnRouter(MODELS)
         router.current["thread-1"] = ("gpt-6-luna", "low")
         request = {"id": 5, "method": "thread/settings/update", "params": {
-            "threadId": "thread-1", "model": "gpt-6-astra", "effort": "high"}}
+            "threadId": "thread-1", "model": "gpt-6.1-sol", "effort": "high"}}
         router.client_message(request)
         router.server_message({"id": 5, "result": {}})
         with patch.object(cli.Ollaya, "decide") as decide:
             changed, _ = router.client_message(turn(6, "task"))
-            self.assertEqual(changed["params"]["model"], "gpt-6-astra")
+            self.assertEqual(changed["params"]["model"], "gpt-6.1-sol")
             decide.assert_not_called()
 
     def test_images_and_unavailable_classifier_use_high_model(self):
@@ -95,9 +120,9 @@ class TurnRoutingTests(unittest.TestCase):
         message["params"]["input"].append({"type": "localImage", "path": "PRIVATE.png"})
         with patch.object(cli.Ollaya, "decide") as decide:
             changed, _ = router.client_message(message)
-            self.assertEqual(changed["params"]["model"], "gpt-6-astra")
+            self.assertEqual(changed["params"]["model"], "gpt-6.1-sol")
             decide.assert_not_called()
         with patch.object(cli.Ollaya, "decide", side_effect=TimeoutError):
             changed, result = router.client_message(turn(2, "new task"))
             self.assertEqual(result["source"], "fallback")
-            self.assertEqual(changed["params"]["model"], "gpt-6-astra")
+            self.assertEqual(changed["params"]["model"], "gpt-6.1-sol")

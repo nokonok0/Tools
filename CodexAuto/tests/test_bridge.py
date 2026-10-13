@@ -27,7 +27,7 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
             address = f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}"
             with patch.object(cli.Ollaya, "decide", side_effect=[response("routine"), response("investigation")]):
                 async with connect(address, additional_headers={"Authorization": "Bearer test-secret"}, proxy=None) as client:
-                    for identifier, expected in ((1, "gpt-6-luna"), (2, "gpt-6-astra")):
+                    for identifier, expected in ((1, "gpt-6-luna"), (2, "gpt-6.1-sol")):
                         await client.send(json.dumps(turn(identifier, "task")))
                         received = json.loads(await asyncio.wait_for(client.recv(), 3))
                         self.assertEqual(received["params"]["model"], expected)

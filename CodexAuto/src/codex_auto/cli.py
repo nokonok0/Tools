@@ -16,10 +16,11 @@ import urllib.parse
 import urllib.request
 
 KINDS = ("routine", "implementation", "investigation")
+BANNED_MODELS = frozenset(("gpt-6-astra", "gpt-6-sol"))
 ROLES = {
     "routine": (("gpt-6-luna", "gpt-5.6-luna"), "low"),
-    "implementation": (("gpt-6.1-sol", "gpt-6-sol", "gpt-5.6-sol"), "medium"),
-    "investigation": (("gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-5.6-sol"), "high"),
+    "implementation": (("gpt-6.1-sol", "gpt-5.6-sol"), "medium"),
+    "investigation": (("gpt-6.1-sol", "gpt-5.6-sol"), "high"),
 }
 EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
 QUESTIONS = {
@@ -41,6 +42,11 @@ QUESTIONS = {
 
 class RoutingError(Exception):
     pass
+
+
+def check_allowed_model(model):
+    if isinstance(model, str) and model.strip().lower() in BANNED_MODELS:
+        raise RoutingError(f"{model} は使用禁止です。6.1 SolまたはLunaなどを指定してください")
 
 
 def codex_home():
@@ -125,7 +131,7 @@ def catalog(settings):
         result = {}
         for model in records:
             name = model.get("slug") or model.get("model") or model.get("id")
-            if not name or model.get("visibility") == "hide" or model.get("hidden") is True:
+            if not name or name in BANNED_MODELS or model.get("visibility") == "hide" or model.get("hidden") is True:
                 continue
             levels = model.get("supported_reasoning_levels", model.get("supportedReasoningEfforts", []))
             efforts = [level.get("effort", level.get("reasoningEffort")) if isinstance(level, dict) else level
@@ -264,6 +270,8 @@ def choose_model(models, kind, preferred_effort=None):
     if kind == "routine":
         names = (*names, *ROLES["implementation"][0], *ROLES["investigation"][0])
     for name in dict.fromkeys(names):
+        if name in BANNED_MODELS:
+            continue
         record = models.get(name)
         if not record:
             continue
@@ -293,6 +301,7 @@ def quota_summary():
 
 
 def build_command(prefix, model, effort, prompt, tail, manual_options, no_daemon=True):
+    check_allowed_model(model)
     command = list(prefix)
     if "model" not in manual_options:
         command += ["--model", model]
@@ -347,6 +356,7 @@ def main(argv=None):
                 print(f"{name}: {', '.join(record['efforts']) or 'default'}")
             return 0
         explicit = args.model or manual.get("model")
+        check_allowed_model(explicit)
         effort = args.effort or manual.get("model_reasoning_effort")
         if args.model and manual.get("model") and args.model != manual["model"]:
             raise RoutingError("モデルの手動指定が重複して食い違っています")

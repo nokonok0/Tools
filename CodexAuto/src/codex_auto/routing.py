@@ -1,7 +1,7 @@
 from collections import OrderedDict, deque
 from copy import deepcopy
 
-from .cli import Ollaya, RoutingError, assess, choose_model
+from .cli import BANNED_MODELS, Ollaya, RoutingError, assess, check_allowed_model, choose_model
 
 
 def text_input(items):
@@ -12,6 +12,7 @@ def text_input(items):
 
 class TurnRouter:
     def __init__(self, models, timeout=15, model=None, effort=None):
+        check_allowed_model(model)
         self.models = models
         self.timeout = timeout
         self.fixed_model = model
@@ -41,6 +42,7 @@ class TurnRouter:
         model = pin.get("model") or self.fixed_model
         effort = pin.get("effort") or self.fixed_effort
         if model:
+            check_allowed_model(model)
             return {"model": model, "effort": effort, "source": "manual", "reason": "手動指定"}
         history = tuple(self.history(thread_id))
         state = prompt
@@ -63,8 +65,13 @@ class TurnRouter:
         method = message.get("method")
         params = message.get("params") or {}
         thread_id = params.get("threadId")
+        if method in ("thread/start", "thread/resume", "thread/fork", "thread/settings/update", "turn/settings/update") or (
+                method == "turn/start" and params.get("toolOutput") is not None):
+            check_allowed_model(params.get("model"))
+            mode = params.get("collaborationMode") or {}
+            check_allowed_model((mode.get("settings") or {}).get("model"))
         if method in ("thread/start", "thread/resume", "thread/fork", "thread/read",
-                      "thread/rollback", "thread/settings/update", "turn/start") and "id" in message:
+                      "thread/rollback", "thread/settings/update", "turn/start", "model/list") and "id" in message:
             if len(self.pending) >= 256:
                 raise RoutingError("未完了の要求が多すぎます")
             self.pending[message["id"]] = (method, deepcopy(params))
@@ -97,6 +104,10 @@ class TurnRouter:
                 return
             method, params = pending
             result = message.get("result") or {}
+            if method == "model/list":
+                result["data"] = [record for record in result.get("data", [])
+                                  if (record.get("slug") or record.get("model") or record.get("id")) not in BANNED_MODELS]
+                return
             thread = result.get("thread") or {}
             thread_id = thread.get("id") or params.get("threadId")
             if method in ("thread/start", "thread/resume", "thread/fork", "thread/read", "thread/rollback"):
