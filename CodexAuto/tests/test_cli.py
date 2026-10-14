@@ -85,7 +85,7 @@ class RoutingTests(unittest.TestCase):
 
     def test_catalog_compatibility_and_high_model_fallback(self):
         models = {"gpt-6.1-sol": MODELS["gpt-6.1-sol"]}
-        self.assertEqual(cli.choose_model(models, "investigation"), ("gpt-6.1-sol", "high"))
+        self.assertEqual(cli.choose_model(models, "investigation"), ("gpt-6.1-sol", "low"))
         self.assertEqual(cli.choose_model(MODELS, "routine", "ultra"), ("gpt-6.1-sol", "ultra"))
         with self.assertRaises(cli.RoutingError):
             cli.choose_model({}, "investigation")

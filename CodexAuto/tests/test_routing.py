@@ -63,6 +63,7 @@ class TurnRoutingTests(unittest.TestCase):
                 changed, result = router.client_message(original)
                 self.assertEqual(original, before)
                 self.assertEqual(changed["params"]["model"], model)
+                self.assertEqual(changed["params"]["effort"], "low")
                 self.assertEqual(changed["params"]["collaborationMode"]["settings"]["model"], model)
                 self.assertEqual(changed["params"]["threadId"], "thread-1")
                 self.assertEqual(changed["params"]["sandboxPolicy"], original["params"]["sandboxPolicy"])
@@ -126,6 +127,29 @@ class TurnRoutingTests(unittest.TestCase):
             self.assertEqual(changed["params"]["model"], "gpt-6.1-sol")
             decide.assert_not_called()
 
+    def test_nested_same_value_manual_selection_is_pinned_only_after_success(self):
+        router = TurnRouter(MODELS)
+        router.current["thread-1"] = ("gpt-6.1-sol", "low")
+        request = {"id": 5, "method": "thread/settings/update", "params": {
+            "threadId": "thread-1", "model": None, "effort": "high",
+            "collaborationMode": {"mode": "default", "settings": {
+                "model": "gpt-6.1-sol", "reasoning_effort": "low"}}}}
+        router.client_message(request)
+        router.server_message({"id": 5, "error": {"message": "failure"}})
+        self.assertFalse(router.pins)
+        router.client_message(request)
+        router.server_message({"id": 5, "result": {}})
+        with patch.object(cli.Ollaya, "decide") as decide:
+            changed, result = router.client_message(turn(6, "investigate"))
+            self.assertEqual(result["source"], "manual")
+            self.assertEqual(changed["params"]["effort"], "low")
+            self.assertEqual(changed["params"]["collaborationMode"]["settings"]["reasoning_effort"], "low")
+            decide.assert_not_called()
+        request["params"]["collaborationMode"]["settings"]["reasoning_effort"] = "medium"
+        router.client_message(request)
+        router.server_message({"id": 5, "result": {}})
+        self.assertEqual(router.select("thread-1", "task")["effort"], "medium")
+
     def test_images_and_unavailable_classifier_use_high_model(self):
         router = TurnRouter(MODELS)
         message = turn(1, "inspect this")
@@ -133,8 +157,10 @@ class TurnRoutingTests(unittest.TestCase):
         with patch.object(cli.Ollaya, "decide") as decide:
             changed, _ = router.client_message(message)
             self.assertEqual(changed["params"]["model"], "gpt-6.1-sol")
+            self.assertEqual(changed["params"]["effort"], "low")
             decide.assert_not_called()
         with patch.object(cli.Ollaya, "decide", side_effect=TimeoutError):
             changed, result = router.client_message(turn(2, "new task"))
             self.assertEqual(result["source"], "fallback")
+            self.assertEqual(changed["params"]["effort"], "low")
             self.assertEqual(changed["params"]["model"], "gpt-6.1-sol")

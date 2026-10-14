@@ -19,8 +19,8 @@ KINDS = ("routine", "implementation", "investigation")
 BANNED_MODELS = frozenset(("gpt-6-astra", "gpt-6-sol"))
 ROLES = {
     "routine": (("gpt-6-luna", "gpt-5.6-luna"), "low"),
-    "implementation": (("gpt-6.1-sol", "gpt-5.6-sol"), "medium"),
-    "investigation": (("gpt-6.1-sol", "gpt-5.6-sol"), "high"),
+    "implementation": (("gpt-6.1-sol", "gpt-5.6-sol"), "low"),
+    "investigation": (("gpt-6.1-sol", "gpt-5.6-sol"), "low"),
 }
 EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
 QUESTIONS = {
@@ -278,9 +278,9 @@ def choose_model(models, kind, preferred_effort=None):
         if record["efforts"] and effort not in record["efforts"]:
             continue
         if not record["efforts"]:
-            if preferred_effort:
+            if preferred_effort or record["default"] != "low":
                 continue
-            return name, record["default"] if record["default"] in EFFORTS else None
+            return name, "low"
         return name, effort
     raise RoutingError("選択条件に合うモデルが一覧にありません。--list-modelsで確認し、--modelで指定してください")
 

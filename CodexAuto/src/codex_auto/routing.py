@@ -136,11 +136,15 @@ class TurnRouter:
                 self.current[thread_id] = (params.get("model"), params.get("effort"))
             elif method == "thread/settings/update":
                 previous = self.current.get(thread_id, (None, None))
+                settings = (params.get("collaborationMode") or {}).get("settings") or {}
+                model = settings.get("model") or params.get("model")
+                effort = settings.get("reasoning_effort") or params.get("effort")
                 pin = self.pins.setdefault(thread_id, {})
-                if params.get("model") and params["model"] != previous[0]:
-                    pin["model"] = params["model"]
-                if params.get("effort") and params["effort"] != previous[1]:
-                    pin["effort"] = params["effort"]
+                if model:
+                    pin["model"] = model
+                if effort:
+                    pin["effort"] = effort
+                self.current[thread_id] = (model or previous[0], effort or previous[1])
         elif message.get("method") == "item/completed":
             params = message.get("params") or {}
             item = params.get("item") or {}
