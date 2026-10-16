@@ -10,3 +10,7 @@ auth.json
 credentials.json
 observations.json
 notifications.json
+examples.json
+labels.json
+results-calibration.json
+results-evaluation.json

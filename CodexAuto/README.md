@@ -78,4 +78,6 @@ uv run --locked python tools/verify_protocol.py
 
 `verify_protocol.py`は一時的な空のCodex設定で接続・モデル一覧・一時会話の作成を確認します。認証情報やモデル推論は使いません。実際のモデル切り替えまで確認する場合は、利用枠を消費することを了解したうえで`uv run --locked python tools/verify_live_turns.py --allow-inference`を実行してください。二つの短い応答だけを、MCP無効・読み取り専用の一時会話で確認します。
 
+実チャットを使うローカル専用の教材作成・判定評価は [評価手順](EVALUATION.md) を参照してください。本文・ラベルはリポジトリ外に保存し、本番の振り分けやモデルの重みは変更しません。
+
 資料: [Ollaya API](https://ollaya.dev/docs/api)、[Codex CLI](https://learn.chatgpt.com/docs/cli/reference)、[Codex App Server](https://learn.chatgpt.com/docs/app-server)
