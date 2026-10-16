@@ -70,7 +70,7 @@ class TurnRoutingTests(unittest.TestCase):
                 self.assertEqual(changed["params"]["approvalPolicy"], "on-request")
                 router.server_message({"id": identifier, "result": {"turn": {"id": str(identifier)}}})
             self.assertEqual(decide.call_count, 3)
-            self.assertIn("task-1", decide.call_args.args[0])
+            self.assertNotIn("task-1", decide.call_args.args[0])
             self.assertIn("task-3", decide.call_args.args[0])
 
     def test_history_is_bounded_and_isolated_per_thread(self):

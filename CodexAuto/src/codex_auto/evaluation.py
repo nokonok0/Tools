@@ -7,7 +7,7 @@ import json
 import os
 from pathlib import Path
 
-from .cli import Ollaya, RoutingError, assess, codex_home
+from .cli import Ollaya, RoutingError, classify, codex_home
 
 
 def private_dir():
@@ -61,21 +61,15 @@ def extract(files, limit=240):
     return records[:limit]
 
 
-def state(record):
-    context = "\n".join(f"{item['role']}: {item['text']}" for item in record["context"])
-    return (f"直近の会話（今回の依頼を理解するための背景）:\n{context}\n\n今回の依頼:\n{record['prompt']}"
-            if context else record["prompt"])
-
-
 def evaluate(records, decide):
     results = []
     for record in records:
         if record.get("expected") not in ("luna", "sol"):
             continue
         try:
-            kind, confidence, reason = assess(decide(state(record)))
+            kind, confidence, reason, source = classify(record["prompt"], decide,
+                [(item["role"], item["text"]) for item in record["context"]])
             selected = "luna" if kind == "routine" else "sol"
-            source = "ollaya"
         except (RoutingError, OSError, ValueError, KeyError, TypeError, AttributeError):
             selected, confidence, reason, source = "sol", None, "判定失敗", "fallback"
         results.append({"id": record["id"], "split": record["split"],

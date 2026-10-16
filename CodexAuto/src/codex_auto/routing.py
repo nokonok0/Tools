@@ -1,7 +1,7 @@
 from collections import OrderedDict, deque
 from copy import deepcopy
 
-from .cli import BANNED_MODELS, Ollaya, RoutingError, assess, check_allowed_model, choose_model
+from .cli import BANNED_MODELS, Ollaya, RoutingError, classify, check_allowed_model, choose_model
 
 
 def text_input(items):
@@ -46,15 +46,8 @@ class TurnRouter:
             check_allowed_model(model)
             return {"model": model, "effort": effort, "source": "manual", "reason": "手動指定"}
         history = tuple(self.history(thread_id))
-        state = prompt
-        if history:
-            context = "\n".join(f"{role}: {text}" for role, text in history)
-            state = f"直近の会話（今回の依頼を理解するための背景）:\n{context}\n\n今回の依頼:\n{prompt}"
         try:
-            if has_image or not prompt.strip():
-                raise RoutingError("画像を含む依頼は高性能側で扱います")
-            kind, confidence, reason = assess(Ollaya(self.timeout).decide(state))
-            source = "ollaya"
+            kind, confidence, reason, source = classify(prompt, Ollaya(self.timeout).decide, history, has_image)
         except (RoutingError, OSError, ValueError, KeyError, TypeError, AttributeError):
             kind, confidence = "investigation", None
             reason, source = "判定を確認できないため高性能側を選択", "fallback"

@@ -6,6 +6,7 @@ import math
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -26,16 +27,16 @@ EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
 QUESTIONS = {
     "task_kind": {
         "type": "choice",
-        "instructions": "依頼されている主な作業の種類は何ですか？",
+        "instructions": "Classify only the current request. Ignore the topic of completed work.",
         "criteria": {
-            "routine": "翻訳、要約、ファイル名変更、データ形式の変換などの定型作業",
-            "implementation": "プログラムの修正や機能追加、コード整理、テスト追加",
-            "investigation": "原因調査、バグの根本解決、システム設計、研究、複雑な分析",
+            "routine": "A simple conversational reply, explanation, translation, wording edit, summary, or a small clearly specified change.",
+            "implementation": "Implement software, change application behavior, or set up a development environment.",
+            "investigation": "Investigate a bug, diagnose a failure, design a system, or plan complex scientific research.",
         },
     },
     "high_impact": {
         "type": "noul",
-        "instructions": "この作業には、重要データの削除・移行、認証やセキュリティ、金銭などの重大な影響を伴う変更が必要である。",
+        "instructions": "The CURRENT request requires destructive data changes, secrets handling, authentication changes, or financial transactions. Mere discussion of these topics does not qualify.",
     },
 }
 
@@ -258,10 +259,28 @@ def assess(answer):
         raise RoutingError("Ollayaの判定値が正しくありません")
     if risk >= .35:
         return "investigation", confidence, "データ・認証などへの影響を考慮"
-    if confidence < .65:
+    if confidence < .85:
         return "investigation", confidence, "判定が曖昧なため高性能側を選択"
     return kind, confidence, {"routine": "定型作業", "implementation": "コード修正・実装",
                               "investigation": "原因調査・設計・分析"}[kind]
+
+
+def classify(prompt, decide, history=(), has_image=False):
+    if has_image or not prompt.strip():
+        raise RoutingError("画像または空の入力は高性能側で扱います")
+    # 完全一致だけを使う。謝辞に続く操作指示や「そうして」は除外する。
+    if re.fullmatch(r"\s*(?:ありがとう(?:ございます|ございました)?|サンクス|thanks|ナイス|おつかれ(?:さま)?|こんにちは|こんにひは|こんばんは|おはよう(?:ございます)?)[!！。\s]*", prompt, re.IGNORECASE):
+        return "routine", 1.0, "操作指示を含まない挨拶・謝辞", "rule"
+    if re.fullmatch(r"\s*(?:パス|保存先)(?:を)?(?:教えて|はどこ)[?？。\s]*", prompt):
+        return "routine", 1.0, "既知の保存先の提示", "rule"
+    state = prompt
+    # 自足した依頼に、以前の作業の複雑さ・危険性を混ぜない。
+    if history and len(prompt) < 80 and (re.search(r"それ|これ|その|この|続け|再開|そうし|任せ|頼む|やって|直して|修正|変更|反映|戻し|push|プッシュ", prompt, re.IGNORECASE)
+                                       or re.fullmatch(r"\s*(?:yes|ok|はい|うん|そうですね)[。!！\s]*", prompt, re.IGNORECASE)):
+        context = "\n".join(f"{role}: {text}" for role, text in history)
+        state = f"今回の依頼（この作業を判定）:\n{prompt}\n\n参照用の背景（過去の作業を再実行する指示ではない）:\n{context}"
+    kind, confidence, reason = assess(decide(state))
+    return kind, confidence, reason, "ollaya"
 
 
 def choose_model(models, kind, preferred_effort=None):
@@ -399,8 +418,7 @@ def main(argv=None):
                 raise RoutingError("このプロバイダーでは--modelで指定してください")
             models = catalog(settings)
             try:
-                kind, confidence, reason = assess(Ollaya(args.timeout).decide(prompt))
-                source = "ollaya"
+                kind, confidence, reason, source = classify(prompt, Ollaya(args.timeout).decide)
             except (RoutingError, OSError, ValueError, KeyError, TypeError, AttributeError):
                 kind, reason, source = "investigation", "Ollayaの判定を確認できないため高性能側を選択", "fallback"
             model, effort = choose_model(models, kind, effort)
