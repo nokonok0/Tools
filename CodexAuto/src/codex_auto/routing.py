@@ -21,6 +21,7 @@ class TurnRouter:
         self.current = {}
         self.pins = {}
         self.pending = {}
+        self.manual_turns = {}
 
     def history(self, thread_id):
         if thread_id not in self.histories:
@@ -95,13 +96,18 @@ class TurnRouter:
                 mode["settings"]["reasoning_effort"] = decision["effort"]
         if "id" in message:
             self.pending[message["id"]] = (method, deepcopy(changed["params"]))
+            if thread_id in self.pins:
+                self.manual_turns[message["id"]] = (thread_id, self.pins[thread_id])
         return changed, decision
 
     def server_message(self, message):
         if "id" in message and "method" not in message:
             pending = self.pending.pop(message["id"], None)
+            manual = self.manual_turns.pop(message["id"], None)
             if not pending or "error" in message:
                 return
+            if manual and self.pins.get(manual[0]) is manual[1]:
+                self.pins.pop(manual[0], None)
             method, params = pending
             result = message.get("result") or {}
             if method == "thread/list":
@@ -139,11 +145,13 @@ class TurnRouter:
                 settings = (params.get("collaborationMode") or {}).get("settings") or {}
                 model = settings.get("model") or params.get("model")
                 effort = settings.get("reasoning_effort") or params.get("effort")
-                pin = self.pins.setdefault(thread_id, {})
+                pin = dict(self.pins.get(thread_id, {}))
                 if model:
                     pin["model"] = model
                 if effort:
                     pin["effort"] = effort
+                if pin:
+                    self.pins[thread_id] = pin
                 self.current[thread_id] = (model or previous[0], effort or previous[1])
         elif message.get("method") == "item/completed":
             params = message.get("params") or {}

@@ -150,6 +150,39 @@ class TurnRoutingTests(unittest.TestCase):
         router.server_message({"id": 5, "result": {}})
         self.assertEqual(router.select("thread-1", "task")["effort"], "medium")
 
+    def test_manual_choice_survives_failure_then_returns_to_auto(self):
+        router = TurnRouter(MODELS)
+        request = {"id": 10, "method": "thread/settings/update", "params": {
+            "threadId": "thread-1", "model": "gpt-6.1-sol", "effort": "medium"}}
+        router.client_message(request)
+        router.server_message({"id": 10, "result": {}})
+        with patch.object(cli.Ollaya, "decide", return_value=response("routine")) as decide:
+            changed, _ = router.client_message(turn(11, "translate"))
+            self.assertEqual(changed["params"]["effort"], "medium")
+            router.server_message({"id": 11, "error": {"message": "failure"}})
+            changed, _ = router.client_message(turn(12, "retry"))
+            self.assertEqual(changed["params"]["effort"], "medium")
+            decide.assert_not_called()
+            router.server_message({"id": 12, "result": {"turn": {"id": "ok"}}})
+            changed, result = router.client_message(turn(13, "translate"))
+            self.assertEqual(result["source"], "ollaya")
+            self.assertEqual(changed["params"]["model"], "gpt-6-luna")
+            self.assertEqual(changed["params"]["effort"], "low")
+
+    def test_new_manual_choice_is_not_consumed_by_old_turn_response(self):
+        router = TurnRouter(MODELS)
+        request = {"id": 10, "method": "thread/settings/update", "params": {
+            "threadId": "thread-1", "model": "gpt-6.1-sol", "effort": "low"}}
+        router.client_message(request)
+        router.server_message({"id": 10, "result": {}})
+        router.client_message(turn(11, "task"))
+        request["id"] = 12
+        request["params"]["effort"] = "medium"
+        router.client_message(request)
+        router.server_message({"id": 12, "result": {}})
+        router.server_message({"id": 11, "result": {"turn": {"id": "old"}}})
+        self.assertEqual(router.select("thread-1", "task")["effort"], "medium")
+
     def test_images_and_unavailable_classifier_use_high_model(self):
         router = TurnRouter(MODELS)
         message = turn(1, "inspect this")
