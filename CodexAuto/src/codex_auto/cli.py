@@ -265,6 +265,21 @@ def assess(answer):
                               "investigation": "原因調査・設計・分析"}[kind]
 
 
+def simple_file_search(prompt):
+    text = prompt.strip().rstrip("。!！")
+    if len(text) > 400 or re.search(
+            r"[\n;；。]|原因|調査|比較|分析|解析|修正|変更|削除|移動|実行|置換|同期|認証|秘密|パスワード|トークン|API.?キー|secret|password|token|credential|\b(?:and|then|delete|modify|execute)\b",
+            text, re.IGNORECASE):
+        return False
+    # 明示された対象の単一検索だけ。参照先や後続処理が不明なら通常判定に任せる。
+    if re.search(r"それ|これ|その|この|してから|したら|した後|ついで|および|及び|かつ|して[、,]", text):
+        return False
+    return re.fullmatch(
+        r".{0,240}?(?:ファイル|フォルダ|ディレクトリ|ファイル名|パス|文字列).{0,120}?"
+        r"(?:を|で|から|が|に)(?:検索|探)(?:して|してほしい|してください|してくれ|してくれる|してもらえる|す|せ|せる)(?:[?？])?",
+        text) is not None
+
+
 def classify(prompt, decide, history=(), has_image=False):
     if has_image or not prompt.strip():
         raise RoutingError("画像または空の入力は高性能側で扱います")
@@ -273,6 +288,8 @@ def classify(prompt, decide, history=(), has_image=False):
         return "routine", 1.0, "操作指示を含まない挨拶・謝辞", "rule"
     if re.fullmatch(r"\s*(?:パス|保存先)(?:を)?(?:教えて|はどこ)[?？。\s]*", prompt):
         return "routine", 1.0, "既知の保存先の提示", "rule"
+    if simple_file_search(prompt):
+        return "routine", 1.0, "ファイル・パス・文字列の単純検索", "rule"
     state = prompt
     # 自足した依頼に、以前の作業の複雑さ・危険性を混ぜない。
     if history and len(prompt) < 80 and (re.search(r"それ|これ|その|この|続け|再開|そうし|任せ|頼む|やって|直して|修正|変更|反映|戻し|push|プッシュ", prompt, re.IGNORECASE)

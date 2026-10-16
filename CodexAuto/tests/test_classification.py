@@ -6,6 +6,28 @@ from test_cli import response
 
 
 class ClassificationTests(unittest.TestCase):
+    def test_explicit_file_search_uses_luna_without_classifier(self):
+        for prompt in ("ファイルを検索して", "report.pdfというファイルを探して",
+                       "名前にreportを含むファイルを検索してください。",
+                       "フォルダを探して", "ファイル内の文字列を検索して"):
+            with self.subTest(prompt=prompt):
+                decide = Mock()
+                result = classify(prompt, decide, [("assistant", "原因調査は完了")])
+                self.assertEqual((result[0], result[3]), ("routine", "rule"))
+                decide.assert_not_called()
+
+    def test_complex_sensitive_or_referential_search_is_not_short_circuited(self):
+        for prompt in ("ファイルを検索して原因を調査して", "原因が分かるファイルを探して",
+                       "ファイルを探して削除して", "ファイルを検索して。比較して",
+                       "認証トークンのファイルを探して", "そのファイルを探して",
+                       "ファイルを検索して\n変更して", "ファイルを検索してから実行して"):
+            with self.subTest(prompt=prompt):
+                decide = Mock(return_value=response("investigation"))
+                self.assertEqual(classify(prompt, decide)[0], "investigation")
+                decide.assert_called_once()
+        with self.assertRaises(RoutingError):
+            classify("ファイルを検索して", Mock(), has_image=True)
+
     def test_plain_greeting_ignores_completed_dangerous_history(self):
         decide = Mock()
         result = classify("ありがとう。", decide, [("assistant", "削除と移行は完了しました")])
