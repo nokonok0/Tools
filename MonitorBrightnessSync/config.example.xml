@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<monitors>
+  <monitor id="EXAMPLE001" name="外部画面1" hardware="true" scale="1" gamma="100" />
+  <monitor id="EXAMPLE002" name="外部画面2" softwareFollow="true" minimum="30" />
+</monitors>
