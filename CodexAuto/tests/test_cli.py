@@ -8,7 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from codex_auto import cli
 
@@ -26,6 +26,51 @@ def response(kind="routine", confidence=.99, risk=.05, truncated=False):
 
 
 class RoutingTests(unittest.TestCase):
+    def test_signed_router_interactive_start_keeps_auto_routing_enabled(self):
+        from codex_auto import bridge
+        settings = {"model_provider": "codex-router-signed", "model_providers": {
+            "codex-router-signed": {"base_url": "http://127.0.0.1:4202/v1",
+                                    "wire_api": "responses", "requires_openai_auth": True}}}
+        with patch.object(cli, "native_codex", return_value=["codex.exe"]), \
+             patch.object(cli, "configuration", return_value=(settings, {})), \
+             patch.object(cli, "catalog", return_value=MODELS), \
+             patch.object(cli, "quota_summary", return_value={}), \
+             patch.object(bridge, "run_session", new_callable=AsyncMock, return_value=0) as session, \
+             contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(cli.main([]), 0)
+        router = session.call_args.args[-1]
+        self.assertIsNone(router.fixed_model)
+        self.assertEqual(router.select("test", "ファイルを検索して")["model"], "gpt-6-luna")
+
+    def test_signed_router_can_automatically_select_subscription_models(self):
+        settings = {"model_provider": "codex-router-signed", "model_providers": {
+            "codex-router-signed": {"base_url": "http://127.0.0.1:4202/v1",
+                                    "wire_api": "responses", "requires_openai_auth": True}}}
+        cli.require_auto_provider(settings, {})
+        output = io.StringIO()
+        with patch.object(cli, "native_codex", return_value=["codex.exe"]), \
+             patch.object(cli, "configuration", return_value=(settings, {})), \
+             patch.object(cli, "catalog", return_value=MODELS), \
+             patch.object(cli, "quota_summary", return_value={}), \
+             patch.object(cli.Ollaya, "decide") as decide, contextlib.redirect_stdout(output):
+            self.assertEqual(cli.main(["--dry-run", "--json", "ファイルを検索して"]), 0)
+            decide.assert_not_called()
+        result = json.loads(output.getvalue())
+        self.assertEqual((result["model"], result["effort"]), ("gpt-6-luna", "low"))
+
+    def test_signed_router_requires_local_authenticated_responses_endpoint(self):
+        good = {"base_url": "http://localhost:4202/v1", "wire_api": "responses", "requires_openai_auth": True}
+        for change in ({"base_url": "https://example.com/v1"}, {"requires_openai_auth": False},
+                       {"wire_api": "chat"}, {"base_url": "http://user:secret@localhost/v1"}):
+            settings = {"model_provider": "codex-router-signed",
+                        "model_providers": {"codex-router-signed": good | change}}
+            with self.assertRaises(cli.RoutingError):
+                cli.require_auto_provider(settings, {})
+        with self.assertRaises(cli.RoutingError):
+            cli.require_auto_provider({"model_provider": "codex-router"}, {})
+        with self.assertRaises(cli.RoutingError):
+            cli.require_auto_provider({}, {"provider": "oss"})
+
     def test_banned_models_cannot_be_manual_or_fallback_choices(self):
         banned = {name: {"efforts": ["low", "medium", "high"], "default": "low"}
                   for name in cli.BANNED_MODELS}

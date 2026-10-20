@@ -67,7 +67,8 @@ Codex Meterに新鮮な残量がある場合は起動前に表示します。残
 - `/resume`の一覧に同じセッションIDが複数返った場合は、先頭の一件だけを表示します。別IDの会話は同名でも残し、保存済みの履歴は削除・統合しません。
 - Codexは今のターミナルと作業フォルダを引き継ぎます。依頼文は引数の配列として渡し、シェルのコードとして評価しません。
 - npm版は標準のNodeランチャーを経由し、インストール情報と終了処理を引き継ぎます。
-- OpenAI以外のプロバイダー/OSSを使う場合はモデルを手動指定してください。
+- 通常のOpenAI接続に加え、Codex Routerの `codex-router-signed`（ローカルの `/v1` Responses接続、`requires_openai_auth=true`）でも、`codex-auto`だけでLuna/Solの自動選択を使えます。既存の接続先・認証・プロファイルは変更しません。
+- その他のプロバイダー/OSSではモデルを手動指定してください。OpenRouter等の有料モデルを自動候補に追加する機能ではありません。
 - 外部サーバーを指定する`--remote`は併用できません。中継には実験的なApp Server APIを使用しているため、Codexの更新で互換性が変わる可能性があります。
 - `CODEX_AUTO_OLLAYA_MODEL`で判断モデル、`OLLAYA_HOST`でローカル接続先、`OLLAYA_API_KEY`でOllayaの認証、`CODEX_AUTO_CODEX_EXE`でCodex実行ファイルを指定できます。
 

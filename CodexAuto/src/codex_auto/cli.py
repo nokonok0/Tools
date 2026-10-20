@@ -120,6 +120,22 @@ def configuration(tail):
     return settings, options
 
 
+def require_auto_provider(settings, manual):
+    provider = manual.get("provider") or settings.get("model_provider") or "openai"
+    if provider in ("openai", "openai_chatgpt_plan"):
+        return
+    if provider == "codex-router-signed":
+        config = settings.get("model_providers", {}).get(provider, {})
+        address = urllib.parse.urlsplit(config.get("base_url", ""))
+        if (address.scheme in ("http", "https") and address.hostname in ("127.0.0.1", "localhost", "::1")
+                and not address.username and not address.password and not address.query and not address.fragment
+                and address.path.rstrip("/") == "/v1"
+                and config.get("wire_api") == "responses" and config.get("requires_openai_auth") is True):
+            return
+        raise RoutingError("codex-router-signedのローカルResponses接続とChatGPT認証設定を確認してください")
+    raise RoutingError("このプロバイダーでは--modelで指定してください")
+
+
 def catalog(settings):
     custom = settings.get("model_catalog_json")
     paths = [Path(custom).expanduser()] if custom else [codex_home() / "models_cache.json"]
@@ -414,9 +430,8 @@ def main(argv=None):
             from .bridge import run_session
             from .routing import TurnRouter
 
-            provider = manual.get("provider") or settings.get("model_provider") or "openai"
-            if not explicit and provider not in ("openai", "openai_chatgpt_plan"):
-                raise RoutingError("このプロバイダーでは--modelで指定してください")
+            if not explicit:
+                require_auto_provider(settings, manual)
             models = {} if explicit else catalog(settings)
             boot_model = explicit or choose_model(models, "implementation", effort)[0]
             if not boot_model or boot_model.startswith("-") or any(c.isspace() for c in boot_model):
@@ -430,9 +445,7 @@ def main(argv=None):
             model = explicit
             reason, source, kind = "手動指定", "manual", None
         else:
-            provider = manual.get("provider") or settings.get("model_provider") or "openai"
-            if provider not in ("openai", "openai_chatgpt_plan"):
-                raise RoutingError("このプロバイダーでは--modelで指定してください")
+            require_auto_provider(settings, manual)
             models = catalog(settings)
             try:
                 kind, confidence, reason, source = classify(prompt, Ollaya(args.timeout).decide)
