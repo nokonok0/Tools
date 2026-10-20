@@ -12,6 +12,7 @@ from datetime import datetime
 from tkinter import ttk, messagebox
 
 from core import LogReader, Observations, build_view, data_directory, forecast
+from tray_display import make_icon, time_label
 
 TITLE = "Codex Meter"
 BG, INK, MUTED, ACCENT = "#f5f7f8", "#20272d", "#626c74", "#197a68"
@@ -54,6 +55,7 @@ class Meter:
         except (OSError, ValueError):
             self.notified = set()
         self.last_signature = None
+        self.last_icon_signature = None
         root.title(TITLE)
         if tray_enabled:
             root.withdraw()
@@ -178,12 +180,7 @@ class Meter:
     def setup_tray(self):
         try:
             import pystray
-            from PIL import Image, ImageDraw
-            icon = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-            draw = ImageDraw.Draw(icon)
-            draw.ellipse((3, 3, 61, 61), fill=ACCENT)
-            draw.arc((12, 12, 52, 52), 130, 410, fill="white", width=6)
-            draw.line((32, 32, 43, 22), fill="white", width=5)
+            icon = make_icon("...", "learning")
             self.tray = pystray.Icon("CodexMeter", icon, TITLE, pystray.Menu(
                 pystray.MenuItem("表示 / 非表示", self.tray_toggle, default=True),
                 pystray.MenuItem("更新", lambda *_: self.requests.put(True)),
@@ -304,6 +301,12 @@ class Meter:
         else:
             self.status.configure(text="使用量の記録待ち · Codexで作業すると残量が表示されます")
         if self.tray:
+            result = (forecast(self.view, self.view["models"][0], bucket, "primary", now)
+                      if self.view["models"] else {"status": "unavailable"})
+            signature = (time_label(result), result["status"])
+            if signature != self.last_icon_signature:
+                self.tray.icon = make_icon(*signature)
+                self.last_icon_signature = signature
             short = point.get("primary")
             weekly = point.get("secondary")
             parts = [TITLE]
