@@ -11,8 +11,9 @@ import tkinter as tk
 from datetime import datetime
 from tkinter import ttk, messagebox
 
-from core import LogReader, Observations, build_view, data_directory, forecast
+from core import LogReader, Observations, build_view, data_directory, forecast, full_forecast
 from tray_display import make_icon, time_label
+from credits import fetch_credits, credits_text
 
 TITLE = "Codex Meter"
 BG, INK, MUTED, ACCENT = "#f5f7f8", "#20272d", "#626c74", "#197a68"
@@ -43,6 +44,9 @@ class Meter:
         self.reader = LogReader()
         self.store = Observations()
         self.view = build_view(self.store.events)
+        self.credits = {"status": "loading"}
+        self.credit_requests = queue.Queue()
+        self.credit_observations = queue.Queue()
         self.busy = False
         self.tray = None
         self.tray_enabled = tray_enabled
@@ -63,7 +67,7 @@ class Meter:
             root.wm_attributes("-toolwindow", True)
         root.configure(bg=BG)
         root.minsize(620, 340)
-        width = min(640, root.winfo_screenwidth() - 80)
+        width = min(900, root.winfo_screenwidth() - 80)
         height = min(400, root.winfo_screenheight() - 100)
         root.geometry(f"{width}x{height}+60+60")
         root.protocol("WM_DELETE_WINDOW", self.hide)
@@ -116,13 +120,16 @@ class Meter:
         ttk.Label(table_heading, text="連続使用時の目安", style="Muted.TLabel").pack(side="right")
         table_frame = ttk.Frame(outer)
         table_frame.grid(row=3, column=0, sticky="nsew")
-        cols = ("model", "effort", "primary", "secondary", "measured")
-        self.table = ttk.Treeview(table_frame, columns=cols, displaycolumns=("model", "primary", "secondary", "measured"),
+        cols = ("model", "effort", "primary", "secondary", "measured", "tokens", "rate", "full")
+        self.table = ttk.Treeview(table_frame, columns=cols, displaycolumns=("model", "full", "primary", "rate", "measured", "tokens", "secondary"),
                                   show="headings", selectmode="browse", height=5)
-        titles = ("モデル / 推論", "推論", "上限までの推定時間", "週間枠の推定時間", "実測時間")
-        for col, name, width in zip(cols, titles, (190, 65, 140, 140, 75)):
+        titles = ("モデル / 推論", "推論", "残り推定時間", "週間枠の推定時間", "実測時間", "記録トークン", "消費率 (%/時)", "100%使用時間")
+        for col, name, width in zip(cols, titles, (210, 65, 130, 115, 80, 100, 120, 130)):
             self.table.heading(col, text=name)
             self.table.column(col, width=width, minwidth=60, stretch=col in ("model", "primary", "secondary"))
+        horizontal = ttk.Scrollbar(table_frame, orient="horizontal", command=self.table.xview)
+        horizontal.pack(side="bottom", fill="x")
+        self.table.configure(xscrollcommand=horizontal.set)
         self.table.pack(side="left", fill="both", expand=True)
         scroll = ttk.Scrollbar(table_frame, command=self.table.yview)
         scroll.pack(side="right", fill="y")
@@ -133,6 +140,8 @@ class Meter:
         self.detail.grid(row=4, column=0, sticky="ew", pady=(12, 0))
         self.status = ttk.Label(outer, text="ログを確認中…", style="Muted.TLabel", wraplength=740)
         self.status.grid(row=5, column=0, sticky="ew", pady=(10, 0))
+        self.credit_label = ttk.Label(outer, text=credits_text(self.credits), style="Muted.TLabel")
+        self.credit_label.grid(row=6, column=0, sticky="ew", pady=(8, 0))
         self.root.bind("<Configure>", self.wrap_labels)
         self.root.bind("<FocusOut>", lambda _: root.after(150, self.dismiss_if_unfocused))
         self.root.bind("<Escape>", lambda _: self.hide())
@@ -142,7 +151,29 @@ class Meter:
                 root.deiconify()
         self.worker = threading.Thread(target=self.run, name="log-reader", daemon=True)
         self.worker.start()
+        self.credit_worker = threading.Thread(target=self.run_credits, name="credit-reader", daemon=True)
+        self.credit_worker.start()
         root.after(200, self.tick)
+
+    def run_credits(self):
+        deadline = 0
+        while not self.stop.is_set():
+            forced = False
+            while not self.credit_requests.empty():
+                try:
+                    self.credit_requests.get_nowait()
+                    forced = True
+                except queue.Empty:
+                    break
+            if time.monotonic() >= deadline or forced:
+                result = fetch_credits()
+                if result["status"] == "ready":
+                    self.credit_observations.put({"kind": "credit", "session": "openrouter-credit",
+                                                 **{k: result[k] for k in ("ts", "remaining", "purchased", "spent", "account")}})
+                    self.requests.put(True)
+                self.messages.put(("credits", result))
+                deadline = time.monotonic() + 300
+            self.stop.wait(1)
 
     def wrap_labels(self, event):
         if event.widget == self.root:
@@ -161,6 +192,11 @@ class Meter:
                         break
                 try:
                     added = self.store.add(self.reader.poll(force=forced))
+                    while not self.credit_observations.empty():
+                        try:
+                            added = self.store.add([self.credit_observations.get_nowait()]) or added
+                        except queue.Empty:
+                            break
                     if added or not self.view["latest"]:
                         view = build_view(self.store.events, incomplete=self.reader.truncated)
                         self.messages.put(("view", view))
@@ -239,6 +275,7 @@ class Meter:
         self.busy = True
         self.refresh_button.configure(state="disabled")
         self.requests.put(True)
+        self.credit_requests.put(True)
         self.status.configure(text="更新中…")
 
     def paint_bar(self, slot):
@@ -254,6 +291,7 @@ class Meter:
 
     def render(self):
         now = time.time()
+        self.credit_label.configure(text=credits_text(self.credits, now))
         buckets = sorted(self.view["latest"])
         self.buckets.configure(values=buckets)
         if self.bucket.get() not in buckets:
@@ -281,10 +319,14 @@ class Meter:
             results = [forecast(self.view, model, bucket, slot, now) for slot in ("primary", "secondary")]
             measured = max((self.view["aggregates"].get((model, bucket, s), {}).get("seconds", 0)
                             for s in ("primary", "secondary")), default=0)
+            measured = max(measured, results[0].get("seconds", 0))
+            rate = f"{results[0]['rate']:.2f}" if results[0]["status"] == "ready" else forecast_text(results[0])
             iid = f"model-{index}"
             self.rows[iid] = (model, results)
             self.table.insert("", "end", iid=iid, values=(f"{model[0]} / {model[1]}", model[1],
-                              *(forecast_text(r) for r in results), f"{measured / 60:.0f}分"),
+                              *(forecast_text(r) for r in results), f"{measured / 60:.0f}分",
+                              f"{self.view.get('usage', {}).get(model, {}).get('total_tokens', 0):,}", rate,
+                              forecast_text(full_forecast(self.view, model, bucket))),
                               tags=("current",) if index == 0 else ())
         if selected and selected[0] in self.rows:
             self.table.selection_set(selected[0])
@@ -299,7 +341,7 @@ class Meter:
                 text += " · 同時実行の全件確認ができないため予測を停止"
             self.status.configure(text=text)
         else:
-            self.status.configure(text="使用量の記録待ち · Codexで作業すると残量が表示されます")
+            self.status.configure(text="トークン記録中 · 利用枠は未取得" if self.view.get("usage") else "使用量の記録待ち")
         if self.tray:
             result = (forecast(self.view, self.view["models"][0], bucket, "primary", now)
                       if self.view["models"] else {"status": "unavailable"})
@@ -309,7 +351,7 @@ class Meter:
                 self.last_icon_signature = signature
             short = point.get("primary")
             weekly = point.get("secondary")
-            parts = [TITLE]
+            parts = [TITLE, credits_text(self.credits, now)]
             for label, w in (("短期", short), ("週間", weekly)):
                 if w:
                     if now < w["reset"]:
@@ -335,12 +377,24 @@ class Meter:
             return
         model, results = self.rows[selected[0]]
         texts = []
+        for label, slot in (("100%使用時間", "primary"), ("週間100%使用時間", "secondary")):
+            full = full_forecast(self.view, model, self.bucket.get(), slot)
+            if full["status"] == "ready":
+                texts.append(f"{label}: {duration(full['hours'])}")
         for name, result in zip(("短期", "週間"), results):
             if result["status"] == "ready":
+                if result.get("credit"):
+                    texts.append(f"OpenRouter: ${result['dollars']:.4f}/時間 · 計測開始残高に対する {result['rate']:.2f}%/時間")
+                    continue
                 text = f"{name}: {result['rate']:.1f}%/時間 · {duration(result['low'])}〜{duration(result['high'])}"
                 if result["reset_first"]:
                     text += " · リセットが先"
                 texts.append(text)
+        usage = self.view.get("usage", {}).get(model)
+        if usage:
+            texts.append(f"記録分: 入力 {usage.get('input_tokens', 0):,} · キャッシュ {usage.get('cached_input_tokens', 0):,} · 出力 {usage.get('output_tokens', 0):,}")
+        if not model[0].startswith("openrouter/") and results[1]["status"] != "unavailable":
+            texts.append(f"週間枠: {forecast_text(results[1])}")
         self.detail.configure(text=" / ".join(texts) if texts else f"{model[0]} · 推定に必要な単独使用の記録を収集中")
 
     def tick(self):
@@ -353,6 +407,12 @@ class Meter:
             kind, value = self.messages.get_nowait()
             if kind == "view":
                 self.view = value
+                changed = True
+            elif kind == "credits":
+                if value["status"] == "ready":
+                    self.credits = value
+                else:
+                    self.credits = {**self.credits, "status": value["status"]}
                 changed = True
             elif kind == "done":
                 self.busy = False

@@ -23,6 +23,26 @@ def observations(other=False, reset_change=False, backward=False):
 
 
 class CoreTests(unittest.TestCase):
+    def test_deepseek_usage_without_quota(self):
+        state = {"model": "openrouter/deepseek-v4.1-flash", "effort": "low", "turn": "t"}
+        body = {"type": "token_usage_record", "timestamp": "2026-10-21T00:00:00Z",
+                "payload": {"turn_id": "t", "response_id": "private-id",
+                            "usage": {"input_tokens": 100, "cached_input_tokens": 80,
+                                      "output_tokens": 20, "total_tokens": 120, "secret": "SECRET"},
+                            "thread_token_usage": {"total_tokens": 999999}}}
+        rows = normalize(json.dumps(body).encode(), "s", state)
+        self.assertEqual(rows[0]["usage"]["total_tokens"], 120)
+        self.assertNotIn("private-id", json.dumps(rows))
+        self.assertNotIn("SECRET", json.dumps(rows))
+        self.assertEqual(normalize(json.dumps(body).encode(), "s", {}), [])
+        with tempfile.TemporaryDirectory() as folder:
+            store = Observations(Path(folder) / "events.json")
+            store.add(rows + rows, rows[0]["ts"])
+            view = build_view(store.events, now=rows[0]["ts"])
+            model = (state["model"], "low")
+            self.assertEqual(view["usage"][model]["total_tokens"], 120)
+            self.assertEqual(forecast(view, model, "codex", "primary")["status"], "unavailable")
+
     def test_single_model_empirical_rate(self):
         view = build_view(observations(), now=1241)
         result = forecast(view, ("test-model", "low"), "codex", "primary", now=1241)

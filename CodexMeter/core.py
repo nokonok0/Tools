@@ -48,7 +48,7 @@ def normalize_window(raw):
 
 def normalize(line, session, state):
     # Filter before parsing: tool output, images and user messages can be large.
-    if b'"turn_context"' not in line and b'"event_msg"' not in line:
+    if not any(marker in line for marker in (b'"turn_context"', b'"event_msg"', b'"token_usage_record"')):
         return []
     try:
         obj = json.loads(line)
@@ -59,6 +59,20 @@ def normalize(line, session, state):
     if ts is None or not isinstance(payload, dict):
         return []
     base = {"ts": ts, "session": session}
+    if obj.get("type") == "token_usage_record":
+        raw = payload.get("usage")
+        if not isinstance(raw, dict) or not state.get("model"):
+            return []
+        usage = {key: value for key, value in raw.items()
+                 if key in ("input_tokens", "cached_input_tokens", "cache_write_input_tokens",
+                            "output_tokens", "reasoning_output_tokens", "total_tokens")
+                 and type(value) is int and value >= 0}
+        if not usage:
+            return []
+        return [{**base, "kind": "usage", "turn": str(payload.get("turn_id") or state.get("turn", "")),
+                 "model": state["model"], "effort": state.get("effort", "default"),
+                 "record": hashlib.sha256(str(payload.get("response_id") or obj.get("ordinal") or ts).encode()).hexdigest()[:24],
+                 "usage": usage}]
     if obj.get("type") == "turn_context":
         model = payload.get("model")
         if not isinstance(model, str) or not model:
@@ -188,7 +202,7 @@ class Observations:
                 continue
             if not now - 7 * DAY <= event["ts"] <= now + 60:
                 continue
-            key = (event.get("session"), event["ts"], event.get("kind"), event.get("bucket"))
+            key = self.event_key(event)
             if key not in self.seen:
                 self.seen.add(key)
                 self.events.append(event)
@@ -196,10 +210,15 @@ class Observations:
         if changed:
             self.events = sorted((e for e in self.events if e["ts"] >= now - 7 * DAY),
                                  key=lambda e: e["ts"])[-MAX_EVENTS:]
-            self.seen = {(e.get("session"), e["ts"], e.get("kind"), e.get("bucket"))
-                         for e in self.events}
+            self.seen = {self.event_key(e) for e in self.events}
             self.dirty = True
         return changed
+
+    @staticmethod
+    def event_key(event):
+        if event.get("kind") == "usage":
+            return (event.get("session"), "usage", event.get("record", event["ts"]))
+        return (event.get("session"), event["ts"], event.get("kind"), event.get("bucket"))
 
     def save(self, force=False):
         now = time.time()
@@ -221,12 +240,13 @@ def build_view(events, now=None, incomplete=False):
     latest = {}
     models = {}
     changes = []
+    usage = defaultdict(lambda: defaultdict(int))
     for event in events:
         identity = (event.get("session"), event.get("turn"))
         kind = event.get("kind")
         if event.get("turn"):
             runs.setdefault(identity, {})["last_activity"] = event["ts"]
-        if kind in ("context", "quota") and event.get("model"):
+        if kind in ("context", "quota", "usage") and event.get("model"):
             key = (event["model"], event.get("effort", "default"))
             models[key] = max(models.get(key, 0), event["ts"])
         if kind == "context":
@@ -243,6 +263,10 @@ def build_view(events, now=None, incomplete=False):
                 run["start"] = event["start"]
         elif kind == "quota":
             latest[event["bucket"]] = event
+        elif kind == "usage":
+            key = (event["model"], event.get("effort", "default"))
+            for name, value in event["usage"].items():
+                usage[key][name] += value
     intervals = []
     for identity, run in runs.items():
         if "start" in run:
@@ -251,6 +275,33 @@ def build_view(events, now=None, incomplete=False):
             end = run.get("end", min(now, run.get("last_activity", run["start"]) + 180))
             intervals.append((run["start"], end, identity, run.get("key")))
     intervals.sort()
+    credits = [e for e in events if e.get("kind") == "credit"]
+    credit_rates = defaultdict(lambda: {"seconds": 0., "delta": 0., "samples": 0})
+    baseline = None
+    previous = None
+    for point in credits:
+        if (previous is None or point.get("account") != previous.get("account")
+                or point["purchased"] != previous["purchased"]
+                or point["spent"] < previous["spent"]):
+            baseline = point["remaining"]
+            credit_rates.clear()
+            previous = point
+            continue
+        seconds = point["ts"] - previous["ts"]
+        overlap = [r for r in intervals if r[0] < point["ts"] and r[1] > previous["ts"]]
+        delta = point["spent"] - previous["spent"]
+        if not incomplete and 1 <= seconds <= 900 and len(overlap) == 1 and delta >= 0:
+            run = overlap[0]
+            key = run[3]
+            mixed = any(previous["ts"] < e["ts"] <= point["ts"] and
+                        (e["model"], e.get("effort", "default")) != key for e in changes)
+            if (key and key[0].startswith("openrouter/") and not mixed
+                    and run[0] <= previous["ts"] and run[1] >= point["ts"]):
+                agg = credit_rates[key]
+                agg["seconds"] += seconds
+                agg["delta"] += delta
+                agg["samples"] += 1
+        previous = point
     starts = [r[0] for r in intervals]
     changes_ts = [e["ts"] for e in changes]
     aggregates = defaultdict(lambda: {"seconds": 0., "delta": 0., "samples": 0})
@@ -294,13 +345,36 @@ def build_view(events, now=None, incomplete=False):
                     agg["seconds"] += seconds
                     agg["delta"] += delta
                     agg["samples"] += 1
-    return {"latest": latest, "models": sorted(models, key=models.get, reverse=True),
+    return {"latest": latest, "models": sorted(models, key=models.get, reverse=True), "usage": dict(usage),
             "aggregates": dict(aggregates), "observed_at": max((e["ts"] for e in latest.values()), default=0),
-            "incomplete": incomplete}
+            "incomplete": incomplete, "credit_latest": previous, "credit_baseline": baseline,
+            "credit_rates": dict(credit_rates)}
+
+
+def full_forecast(view, model, bucket, slot="primary"):
+    if model[0].startswith("openrouter/"):
+        if slot != "primary":
+            return {"status": "unavailable"}
+        agg = view.get("credit_rates", {}).get(model, {})
+        baseline = view.get("credit_baseline")
+        if not baseline or baseline <= 0:
+            return {"status": "unavailable"}
+        minimum_seconds, minimum_samples, minimum_delta = 600, 2, .001
+    else:
+        agg = view.get("aggregates", {}).get((model, bucket, slot), {})
+        baseline = 100
+        minimum_seconds, minimum_samples, minimum_delta = 180, 5, 3
+    if (agg.get("seconds", 0) < minimum_seconds or agg.get("samples", 0) < minimum_samples
+            or agg.get("delta", 0) < minimum_delta):
+        return {"status": "learning"}
+    rate = agg["delta"] / agg["seconds"] * 3600 / baseline * 100
+    return {"status": "ready", "hours": 100 / rate, "rate": rate}
 
 
 def forecast(view, model, bucket, slot, now=None):
     now = time.time() if now is None else now
+    if model[0].startswith("openrouter/"):
+        return credit_forecast(view, model, now) if slot == "primary" else {"status": "unavailable"}
     point = view["latest"].get(bucket)
     window = point.get(slot) if point else None
     agg = view["aggregates"].get((model, bucket, slot))
@@ -319,3 +393,23 @@ def forecast(view, model, bucket, slot, now=None):
             "seconds": agg["seconds"], "samples": agg["samples"],
             "low": hours * agg["delta"] / (agg["delta"] + 1),
             "high": hours * agg["delta"] / max(1, agg["delta"] - 1)}
+
+
+def credit_forecast(view, model, now):
+    point = view.get("credit_latest")
+    if not point:
+        return {"status": "unavailable"}
+    if now - point["ts"] > 600:
+        return {"status": "stale"}
+    if point["remaining"] <= 0:
+        return {"status": "exhausted", "hours": 0}
+    agg = view.get("credit_rates", {}).get(model, {})
+    if agg.get("seconds", 0) < 600 or agg.get("samples", 0) < 2 or agg.get("delta", 0) < .001:
+        return {"status": "learning", "seconds": agg.get("seconds", 0)}
+    dollars = agg["delta"] / agg["seconds"] * 3600
+    baseline = view["credit_baseline"]
+    if not baseline or baseline <= 0:
+        return {"status": "unavailable"}
+    return {"status": "ready", "hours": point["remaining"] / dollars,
+            "rate": dollars / baseline * 100, "dollars": dollars,
+            "seconds": agg["seconds"], "samples": agg["samples"], "credit": True}
