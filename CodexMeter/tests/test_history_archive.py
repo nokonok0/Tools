@@ -19,6 +19,21 @@ class ArchiveTests(unittest.TestCase):
             store.save(force=True)
             self.assertEqual(len(Observations(store.path).events), 25000)
 
+    def test_orchestration_checkpoint_preserves_composition_totals(self):
+        from history_archive import checkpoint
+        rows = observations() + [
+            {"kind": "context", "ts": 999, "session": "child", "turn": "c",
+             "model": "gpt-6-luna", "effort": "high"},
+            {"kind": "start", "ts": 999, "session": "child", "turn": "c", "start": 999},
+            {"kind": "end", "ts": 1250, "session": "child", "turn": "c"}]
+        view = build_view(rows, now=1251)
+        self.assertTrue(view["orchestration"]["aggregates"])
+        self.assertFalse(view["aggregates"])
+        saved = json.loads(json.dumps(checkpoint(view, rows)))
+        restored = build_view([], now=1251, history=saved)
+        self.assertEqual(view["orchestration"]["aggregates"], restored["orchestration"]["aggregates"])
+        self.assertFalse(restored["orchestration"]["recent"])
+
     def rotate(self, rows):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)

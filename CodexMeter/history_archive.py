@@ -26,6 +26,8 @@ def checkpoint(view, events):
         "credit_rates": pack(view["credit_rates"]),
         "credit_latest": view["credit_latest"], "credit_baseline": view["credit_baseline"],
         "latest": view["latest"], "contexts": list(contexts.values()),
+        "orchestration": [[[[list(model), count] for model, count in signature], bucket, slot, values]
+                          for (signature, bucket, slot), values in view.get("orchestration", {}).get("aggregates", {}).items()],
     }
 
 
@@ -36,6 +38,9 @@ def add_totals(mapping, key, values):
 
 
 def merge_history(view, history):
+    for signature, bucket, slot, values in history.get("orchestration", []):
+        key = (tuple((tuple(model), count) for model, count in signature), bucket, slot)
+        add_totals(view["orchestration"]["aggregates"], key, values)
     for model, bucket, slot, values in history.get("aggregates", []):
         add_totals(view["aggregates"], (tuple(model), bucket, slot), values)
     for model, values in history.get("usage", []):

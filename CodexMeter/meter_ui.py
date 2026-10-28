@@ -15,6 +15,7 @@ from core import LogReader, Observations, build_view, data_directory, forecast, 
 from tray_display import make_icon, time_label
 from credits import fetch_credits, credits_text
 from history_archive import archive_on_startup
+from orchestration import orchestration_forecast
 
 TITLE = "Codex Meter"
 BG, INK, MUTED, ACCENT = "#f5f7f8", "#20272d", "#626c74", "#197a68"
@@ -34,6 +35,11 @@ def forecast_text(result):
         return duration(result["hours"])
     return {"learning": "計測中", "stale": "更新待ち", "unavailable": "—",
             "exhausted": "上限到達"}[status]
+
+
+def composition_text(signature):
+    return " + ".join(f"{model.removeprefix('gpt-')} / {effort} ×{count}"
+                      for (model, effort), count in signature) or "稼働記録なし"
 
 
 class Meter:
@@ -118,7 +124,11 @@ class Meter:
             bar.bind("<Configure>", lambda _, s=slot: self.paint_bar(s))
         table_heading = ttk.Frame(outer)
         table_heading.grid(row=2, column=0, sticky="ew", pady=(0, 3))
-        ttk.Label(table_heading, text="モデル別の残り時間", font=("Yu Gothic UI", 9, "bold")).pack(side="left")
+        self.display_mode = tk.StringVar(value="全体・構成")
+        modes = ttk.Combobox(table_heading, textvariable=self.display_mode,
+                             values=("全体・構成", "モデル単独"), state="readonly", width=12)
+        modes.pack(side="left")
+        modes.bind("<<ComboboxSelected>>", lambda _: self.render())
         ttk.Label(table_heading, text="連続使用時の目安", style="Muted.TLabel").pack(side="right")
         table_frame = ttk.Frame(outer)
         table_frame.grid(row=3, column=0, sticky="nsew")
@@ -207,10 +217,11 @@ class Meter:
                             added = self.store.add([self.credit_observations.get_nowait()]) or added
                         except queue.Empty:
                             break
-                    if added or not self.view["latest"]:
-                        view = build_view(self.store.events, incomplete=self.reader.truncated,
-                                          history=self.store.history)
-                        self.messages.put(("view", view))
+                    # Active membership and the 15-minute window age even when
+                    # the log receives no new events.
+                    view = build_view(self.store.events, incomplete=self.reader.truncated,
+                                      history=self.store.history)
+                    self.messages.put(("view", view))
                     self.store.save()
                     self.messages.put(("done", None))
                 except FileNotFoundError:
@@ -326,7 +337,13 @@ class Meter:
         selected = self.table.selection()
         self.table.delete(*self.table.get_children())
         self.rows = {}
-        for index, model in enumerate(self.view["models"]):
+        self.orchestration_rows = {}
+        combined = self.display_mode.get() == "全体・構成"
+        self.table.heading("model", text="構成 / 推論 ×人数" if combined else "モデル / 推論")
+        self.table.heading("tokens", text="区間数" if combined else "記録トークン")
+        if combined:
+            self.render_orchestration(bucket, now)
+        for index, model in enumerate(self.view["models"] if not combined else []):
             results = [forecast(self.view, model, bucket, slot, now) for slot in ("primary", "secondary")]
             measured = max((self.view["aggregates"].get((model, bucket, s), {}).get("seconds", 0)
                             for s in ("primary", "secondary")), default=0)
@@ -339,7 +356,7 @@ class Meter:
                               f"{self.view.get('usage', {}).get(model, {}).get('total_tokens', 0):,}", rate,
                               forecast_text(full_forecast(self.view, model, bucket))),
                               tags=("current",) if index == 0 else ())
-        if selected and selected[0] in self.rows:
+        if selected and (selected[0] in self.rows or selected[0] in self.orchestration_rows):
             self.table.selection_set(selected[0])
         stamp = self.view["observed_at"]
         if stamp:
@@ -354,8 +371,7 @@ class Meter:
         else:
             self.status.configure(text="トークン記録中 · 利用枠は未取得" if self.view.get("usage") else "使用量の記録待ち")
         if self.tray:
-            result = (forecast(self.view, self.view["models"][0], bucket, "primary", now)
-                      if self.view["models"] else {"status": "unavailable"})
+            result = orchestration_forecast(self.view, bucket, now=now, recent=True)
             signature = (time_label(result), result["status"])
             if signature != self.last_icon_signature:
                 self.tray.icon = make_icon(*signature)
@@ -371,18 +387,59 @@ class Meter:
                         parts.append(f"{label}: 残り{100 - w['used']:g}% · 更新まで{hours}h{mins:02d}m")
                     else:
                         parts.append(f"{label}: 更新待ち")
-            if self.view["models"]:
-                model = self.view["models"][0]
-                result = forecast(self.view, model, bucket, "primary", now)
-                parts.append(f"{model[0]} / {model[1]} · {forecast_text(result)}")
+            parts.append(f"全体・直近15分: {forecast_text(result)}")
+            parts.append(composition_text(self.view.get("orchestration", {}).get("active", ())))
             if stamp and now - stamp > 300:
                 parts.append("過去の観測値")
             self.tray.title = "\n".join(parts).encode("utf-16-le")[:254].decode("utf-16-le", errors="ignore")
             self.check_notifications(point, now)
         self.selection()
 
+    def render_orchestration(self, bucket, now):
+        data = self.view.get("orchestration", {})
+        active = data.get("active", ())
+        signatures = {key[0] for key in data.get("aggregates", {}) if key[1] == bucket}
+        if active:
+            signatures.add(active)
+        rows = [("recent", None, "全体・直近15分（活動中の平均）")]
+        rows.extend((f"composition-{index}", signature,
+                     ("現在: " if signature == active else "") + composition_text(signature))
+                    for index, signature in enumerate(sorted(signatures, key=lambda s: (s != active, s))))
+        for iid, signature, label in rows:
+            results = [orchestration_forecast(self.view, bucket, slot, now,
+                       signature=signature, recent=signature is None) for slot in ("primary", "secondary")]
+            agg = (data.get("recent", {}).get((bucket, "primary"), {}) if signature is None else
+                   data.get("aggregates", {}).get((signature, bucket, "primary"), {}))
+            full = duration(results[0]["full_hours"]) if results[0]["status"] == "ready" else forecast_text(results[0])
+            rate = f"{results[0]['rate']:.2f}" if results[0]["status"] == "ready" else forecast_text(results[0])
+            self.orchestration_rows[iid] = (signature, results)
+            self.table.insert("", "end", iid=iid, values=(label, "", forecast_text(results[0]),
+                              forecast_text(results[1]), f"{agg.get('seconds', 0) / 60:.0f}分",
+                              str(agg.get("samples", 0)), rate, full),
+                              tags=("current",) if signature == active or signature is None else ())
+        if not self.table.selection():
+            self.table.selection_set("recent")
+
     def selection(self, _=None):
         selected = self.table.selection()
+        if selected and selected[0] in self.orchestration_rows:
+            signature, results = self.orchestration_rows[selected[0]]
+            parts = []
+            for label, result in zip(("短期", "週間"), results):
+                text = f"{label}: {forecast_text(result)}"
+                if result["status"] == "ready":
+                    text += f" · {result['rate']:.2f}%/時"
+                    if result.get("reset_first"):
+                        text += " · リセットが先"
+                parts.append(text)
+            if signature is None:
+                parts.append("直近15分の活動区間。構成変更を含む現在ペースの目安")
+            else:
+                parts.append("同じモデル・推論・人数の全期間平均。親子・別チャットを含む")
+            if self.view.get("incomplete"):
+                parts.append("読取不足のため予測停止")
+            self.detail.configure(text=" / ".join(parts))
+            return
         if not selected or selected[0] not in self.rows:
             self.detail.configure(text="")
             return

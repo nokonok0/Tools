@@ -354,6 +354,8 @@ def build_view(events, now=None, incomplete=False, history=None):
             "incomplete": incomplete, "credit_latest": previous, "credit_baseline": baseline,
             "credit_rates": dict(credit_rates), "model_seen": models, "intervals": intervals,
             "credit_points": credits}
+    from orchestration import build_orchestration
+    view["orchestration"] = build_orchestration(events, intervals, changes, now, incomplete)
     if history:
         from history_archive import merge_history
         merge_history(view, history)
