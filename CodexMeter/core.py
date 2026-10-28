@@ -12,7 +12,6 @@ from datetime import datetime
 from pathlib import Path
 
 DAY = 86400
-MAX_EVENTS = 24000
 MAX_READ = 2 * 1024 * 1024
 
 
@@ -186,9 +185,13 @@ class Observations:
         self.seen = set()
         self.dirty = False
         self.saved_at = 0
+        self.history = {}
+        self.archived_through = float('-inf')
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
-            if raw.get("version") == 1 and isinstance(raw.get("events"), list):
+            if raw.get("version") in (1, 2) and isinstance(raw.get("events"), list):
+                self.history = raw.get("history", {})
+                self.archived_through = raw.get("archived_through") or float('-inf')
                 self.add(raw["events"])
         except (OSError, ValueError, AttributeError):
             pass
@@ -200,7 +203,7 @@ class Observations:
         for event in events:
             if not isinstance(event, dict) or not isinstance(event.get("ts"), (float, int)):
                 continue
-            if not now - 7 * DAY <= event["ts"] <= now + 60:
+            if not self.archived_through < event["ts"] <= now + 60:
                 continue
             key = self.event_key(event)
             if key not in self.seen:
@@ -208,8 +211,7 @@ class Observations:
                 self.events.append(event)
                 changed = True
         if changed:
-            self.events = sorted((e for e in self.events if e["ts"] >= now - 7 * DAY),
-                                 key=lambda e: e["ts"])[-MAX_EVENTS:]
+            self.events.sort(key=lambda e: e["ts"])
             self.seen = {self.event_key(e) for e in self.events}
             self.dirty = True
         return changed
@@ -226,16 +228,18 @@ class Observations:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(".tmp")
-        temporary.write_text(json.dumps({"version": 1, "events": self.events},
+        temporary.write_text(json.dumps({"version": 2, "events": self.events,
+                                        "history": self.history,
+                                        "archived_through": self.archived_through if self.history else None},
                                         ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
         temporary.replace(self.path)
         self.saved_at = now
         self.dirty = False
 
 
-def build_view(events, now=None, incomplete=False):
+def build_view(events, now=None, incomplete=False, history=None):
     now = time.time() if now is None else now
-    events = sorted(events, key=lambda e: e["ts"])
+    events = sorted(list((history or {}).get("contexts", [])) + list(events), key=lambda e: e["ts"])
     runs = {}
     latest = {}
     models = {}
@@ -345,10 +349,15 @@ def build_view(events, now=None, incomplete=False):
                     agg["seconds"] += seconds
                     agg["delta"] += delta
                     agg["samples"] += 1
-    return {"latest": latest, "models": sorted(models, key=models.get, reverse=True), "usage": dict(usage),
+    view = {"latest": latest, "models": sorted(models, key=models.get, reverse=True), "usage": dict(usage),
             "aggregates": dict(aggregates), "observed_at": max((e["ts"] for e in latest.values()), default=0),
             "incomplete": incomplete, "credit_latest": previous, "credit_baseline": baseline,
-            "credit_rates": dict(credit_rates)}
+            "credit_rates": dict(credit_rates), "model_seen": models, "intervals": intervals,
+            "credit_points": credits}
+    if history:
+        from history_archive import merge_history
+        merge_history(view, history)
+    return view
 
 
 def full_forecast(view, model, bucket, slot="primary"):

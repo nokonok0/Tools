@@ -77,7 +77,7 @@ SetTimer(UpdateHoverState, 40)
 ; 左ボタンを押している間は無効にし、既存の左ホールド＋右ドラッグを残す。
 #HotIf !GetKeyState("LButton", "P")
 $RButton:: {
-    if KeyWait("RButton", "T0.5") {
+    if KeyWait("RButton", "T0.3") {
         Click("Right")
         return
     }

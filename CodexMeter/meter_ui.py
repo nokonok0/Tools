@@ -14,6 +14,7 @@ from tkinter import ttk, messagebox
 from core import LogReader, Observations, build_view, data_directory, forecast, full_forecast
 from tray_display import make_icon, time_label
 from credits import fetch_credits, credits_text
+from history_archive import archive_on_startup
 
 TITLE = "Codex Meter"
 BG, INK, MUTED, ACCENT = "#f5f7f8", "#20272d", "#626c74", "#197a68"
@@ -43,7 +44,7 @@ class Meter:
         self.messages = queue.Queue()
         self.reader = LogReader()
         self.store = Observations()
-        self.view = build_view(self.store.events)
+        self.view = build_view(self.store.events, history=self.store.history)
         self.credits = {"status": "loading"}
         self.credit_requests = queue.Queue()
         self.credit_observations = queue.Queue()
@@ -67,24 +68,24 @@ class Meter:
             root.wm_attributes("-toolwindow", True)
         root.configure(bg=BG)
         root.minsize(620, 340)
-        width = min(900, root.winfo_screenwidth() - 80)
+        width = min(640, root.winfo_screenwidth() - 80)
         height = min(400, root.winfo_screenheight() - 100)
         root.geometry(f"{width}x{height}+60+60")
         root.protocol("WM_DELETE_WINDOW", self.hide)
         style = ttk.Style(root)
         style.theme_use("clam")
         style.configure("TFrame", background=BG)
-        style.configure("TLabel", background=BG, foreground=INK, font=("Yu Gothic UI", 10))
+        style.configure("TLabel", background=BG, foreground=INK, font=("Yu Gothic UI", 9))
         style.configure("Muted.TLabel", foreground=MUTED)
-        style.configure("Title.TLabel", font=("Segoe UI", 13, "bold"))
-        style.configure("Number.TLabel", font=("Segoe UI", 20, "bold"))
-        style.configure("TButton", font=("Yu Gothic UI", 10), padding=(10, 5))
-        style.configure("Treeview", font=("Yu Gothic UI", 9), rowheight=28,
+        style.configure("Title.TLabel", font=("Segoe UI", 11, "bold"))
+        style.configure("Number.TLabel", font=("Segoe UI", 10, "bold"))
+        style.configure("TButton", font=("Yu Gothic UI", 9), padding=(6, 2))
+        style.configure("Treeview", font=("Yu Gothic UI", 8), rowheight=23,
                         background="#ffffff", fieldbackground="#ffffff", borderwidth=0)
-        style.configure("Treeview.Heading", font=("Yu Gothic UI", 9, "bold"), padding=(4, 6))
+        style.configure("Treeview.Heading", font=("Yu Gothic UI", 8, "bold"), padding=(3, 3))
         style.map("Treeview", background=[("selected", "#d5ebe4")],
                   foreground=[("selected", INK)])
-        outer = ttk.Frame(root, padding=16)
+        outer = ttk.Frame(root, padding=10)
         outer.pack(fill="both", expand=True)
         outer.columnconfigure(0, weight=1)
         outer.rowconfigure(3, weight=1)
@@ -98,25 +99,26 @@ class Meter:
         self.buckets.pack(side="right", padx=10)
         self.buckets.bind("<<ComboboxSelected>>", lambda _: self.render())
         self.quota_frames = {}
-        band = ttk.Frame(outer, padding=(0, 12, 0, 12))
+        band = ttk.Frame(outer, padding=(0, 3, 0, 4))
         band.grid(row=1, column=0, sticky="ew")
         for column, slot in enumerate(("primary", "secondary")):
-            frame = ttk.Frame(band, padding=(0 if column == 0 else 22, 0, 22 if column == 0 else 0, 0))
+            frame = ttk.Frame(band, padding=(0 if column == 0 else 14, 0, 14 if column == 0 else 0, 0))
             frame.grid(row=0, column=column, sticky="nsew")
             band.columnconfigure(column, weight=1)
             label = ttk.Label(frame, text="短期枠" if slot == "primary" else "週間枠", style="Muted.TLabel")
-            label.pack(anchor="w")
+            label.grid(row=0, column=0, sticky="w")
             number = ttk.Label(frame, text="—", style="Number.TLabel")
-            number.pack(anchor="w")
-            bar = tk.Canvas(frame, height=6, highlightthickness=0, background="#dfe5e8")
-            bar.pack(fill="x", pady=(6, 9))
+            number.grid(row=0, column=1, sticky="e")
+            frame.columnconfigure(1, weight=1)
+            bar = tk.Canvas(frame, height=4, highlightthickness=0, background="#dfe5e8")
+            bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(2, 1))
             reset = ttk.Label(frame, text="取得中", style="Muted.TLabel")
-            reset.pack(anchor="w")
+            reset.grid(row=2, column=0, columnspan=2, sticky="w")
             self.quota_frames[slot] = (label, number, bar, reset)
             bar.bind("<Configure>", lambda _, s=slot: self.paint_bar(s))
         table_heading = ttk.Frame(outer)
-        table_heading.grid(row=2, column=0, sticky="ew", pady=(0, 8))
-        ttk.Label(table_heading, text="モデル別の残り時間", font=("Yu Gothic UI", 11, "bold")).pack(side="left")
+        table_heading.grid(row=2, column=0, sticky="ew", pady=(0, 3))
+        ttk.Label(table_heading, text="モデル別の残り時間", font=("Yu Gothic UI", 9, "bold")).pack(side="left")
         ttk.Label(table_heading, text="連続使用時の目安", style="Muted.TLabel").pack(side="right")
         table_frame = ttk.Frame(outer)
         table_frame.grid(row=3, column=0, sticky="nsew")
@@ -137,11 +139,11 @@ class Meter:
         self.table.tag_configure("current", foreground=ACCENT)
         self.table.bind("<<TreeviewSelect>>", self.selection)
         self.detail = ttk.Label(outer, text="", style="Muted.TLabel", wraplength=740)
-        self.detail.grid(row=4, column=0, sticky="ew", pady=(12, 0))
+        self.detail.grid(row=4, column=0, sticky="ew", pady=(3, 0))
         self.status = ttk.Label(outer, text="ログを確認中…", style="Muted.TLabel", wraplength=740)
-        self.status.grid(row=5, column=0, sticky="ew", pady=(10, 0))
+        self.status.grid(row=5, column=0, sticky="ew", pady=(2, 0))
         self.credit_label = ttk.Label(outer, text=credits_text(self.credits), style="Muted.TLabel")
-        self.credit_label.grid(row=6, column=0, sticky="ew", pady=(8, 0))
+        self.credit_label.grid(row=6, column=0, sticky="ew", pady=(2, 0))
         self.root.bind("<Configure>", self.wrap_labels)
         self.root.bind("<FocusOut>", lambda _: root.after(150, self.dismiss_if_unfocused))
         self.root.bind("<Escape>", lambda _: self.hide())
@@ -181,6 +183,7 @@ class Meter:
             self.status.configure(wraplength=max(100, event.width - 44))
 
     def run(self):
+        archive_checked = False
         try:
             while not self.stop.is_set():
                 forced = False
@@ -192,13 +195,21 @@ class Meter:
                         break
                 try:
                     added = self.store.add(self.reader.poll(force=forced))
+                    if not archive_checked:
+                        if not self.reader.truncated:
+                            result = archive_on_startup(self.store)
+                            added = added or result == "archived"
+                            if result in ("failed", "offline"):
+                                self.messages.put(("error", "履歴の退避先に接続できないか退避に失敗しました。ローカルで保存を続けます。"))
+                        archive_checked = True
                     while not self.credit_observations.empty():
                         try:
                             added = self.store.add([self.credit_observations.get_nowait()]) or added
                         except queue.Empty:
                             break
                     if added or not self.view["latest"]:
-                        view = build_view(self.store.events, incomplete=self.reader.truncated)
+                        view = build_view(self.store.events, incomplete=self.reader.truncated,
+                                          history=self.store.history)
                         self.messages.put(("view", view))
                     self.store.save()
                     self.messages.put(("done", None))
