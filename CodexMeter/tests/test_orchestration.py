@@ -122,7 +122,11 @@ class OrchestrationTests(unittest.TestCase):
 
     def test_recent_window_and_incomplete(self):
         data = view(now=2300)
-        self.assertFalse(data["orchestration"]["recent"])
+        self.assertEqual(data["orchestration"]["recent"][("codex", "primary")]["seconds"], 240)
+        result = orchestration_forecast(data, "codex", now=2300, recent=True)
+        self.assertEqual(result["status"], "stale")
+        self.assertEqual(result["rate"], 60)
+        self.assertAlmostEqual(result["full_hours"], 100 / 60)
         data = view(incomplete=True)
         self.assertFalse(data["orchestration"]["aggregates"])
         self.assertEqual(orchestration_forecast(data, "codex", now=1241)["status"], "unavailable")

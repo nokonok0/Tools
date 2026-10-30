@@ -122,7 +122,8 @@ def build_orchestration(events, intervals, changes, now, incomplete=False):
                 selected = []
                 if signature:
                     selected.append(totals[(signature, bucket, slot)])
-                if start >= now - RECENT_SECONDS:
+                # Keep the last observed window when wall time advances idle.
+                if start >= points[-1]["ts"] - RECENT_SECONDS:
                     selected.append(recent[(bucket, slot)])
                 for aggregate in selected:
                     aggregate["seconds"] += seconds
@@ -140,10 +141,8 @@ def orchestration_forecast(view, bucket, slot="primary", now=None, signature=Non
     window = point.get(slot) if point else None
     if not window:
         return {"status": "unavailable"}
-    if now >= window["reset"] or now - point["ts"] > 300:
-        return {"status": "stale"}
-    if window["used"] >= 100:
-        return {"status": "exhausted", "hours": 0}
+    status = ("stale" if now >= window["reset"] or now - point["ts"] > 300 else
+              "exhausted" if window["used"] >= 100 else "ready")
     orchestration = view.get("orchestration", {})
     if recent:
         aggregate = orchestration.get("recent", {}).get((bucket, slot), {})
@@ -152,9 +151,12 @@ def orchestration_forecast(view, bucket, slot="primary", now=None, signature=Non
         aggregate = orchestration.get("aggregates", {}).get((signature, bucket, slot), {})
     seconds = aggregate.get("seconds", 0)
     if seconds < 180 or aggregate.get("samples", 0) < 5 or aggregate.get("delta", 0) < 3:
-        return {"status": "learning", "seconds": seconds, "samples": aggregate.get("samples", 0)}
+        return {"status": status if status != "ready" else "learning",
+                **({"hours": 0} if status == "exhausted" else {}),
+                "seconds": seconds, "samples": aggregate.get("samples", 0)}
     rate = aggregate["delta"] / seconds * 3600
     hours = (100 - window["used"]) / rate
-    return {"status": "ready", "hours": hours, "rate": rate, "full_hours": 100 / rate,
+    return {"status": status, "hours": hours, "rate": rate, "full_hours": 100 / rate,
+            "observed_at": point["ts"],
             "seconds": seconds, "samples": aggregate["samples"],
-            "reset_first": hours * 3600 >= window["reset"] - now}
+            "reset_first": hours * 3600 >= window["reset"] - point["ts"]}

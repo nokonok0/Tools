@@ -391,16 +391,17 @@ def forecast(view, model, bucket, slot, now=None):
     agg = view["aggregates"].get((model, bucket, slot))
     if not window:
         return {"status": "unavailable"}
-    if now >= window["reset"] or now - point["ts"] > 300:
-        return {"status": "stale"}
-    if window["used"] >= 100:
-        return {"status": "exhausted", "hours": 0}
+    status = ("stale" if now >= window["reset"] or now - point["ts"] > 300 else
+              "exhausted" if window["used"] >= 100 else "ready")
     if not agg or agg["seconds"] < 180 or agg["delta"] < 3 or agg["samples"] < 5:
-        return {"status": "learning", "seconds": (agg or {}).get("seconds", 0)}
+        return {"status": status if status != "ready" else "learning",
+                **({"hours": 0} if status == "exhausted" else {}),
+                "seconds": (agg or {}).get("seconds", 0)}
     rate = agg["delta"] / agg["seconds"] * 3600
     hours = (100 - window["used"]) / rate
-    return {"status": "ready", "hours": hours, "rate": rate,
-            "reset_first": hours * 3600 >= window["reset"] - now,
+    return {"status": status, "hours": hours, "rate": rate, "full_hours": 100 / rate,
+            "observed_at": point["ts"],
+            "reset_first": hours * 3600 >= window["reset"] - point["ts"],
             "seconds": agg["seconds"], "samples": agg["samples"],
             "low": hours * agg["delta"] / (agg["delta"] + 1),
             "high": hours * agg["delta"] / max(1, agg["delta"] - 1)}
@@ -410,17 +411,19 @@ def credit_forecast(view, model, now):
     point = view.get("credit_latest")
     if not point:
         return {"status": "unavailable"}
-    if now - point["ts"] > 600:
-        return {"status": "stale"}
-    if point["remaining"] <= 0:
-        return {"status": "exhausted", "hours": 0}
+    status = ("stale" if now - point["ts"] > 600 else
+              "exhausted" if point["remaining"] <= 0 else "ready")
     agg = view.get("credit_rates", {}).get(model, {})
     if agg.get("seconds", 0) < 600 or agg.get("samples", 0) < 2 or agg.get("delta", 0) < .001:
-        return {"status": "learning", "seconds": agg.get("seconds", 0)}
+        return {"status": status if status != "ready" else "learning",
+                **({"hours": 0} if status == "exhausted" else {}),
+                "seconds": agg.get("seconds", 0)}
     dollars = agg["delta"] / agg["seconds"] * 3600
     baseline = view["credit_baseline"]
     if not baseline or baseline <= 0:
         return {"status": "unavailable"}
-    return {"status": "ready", "hours": point["remaining"] / dollars,
+    return {"status": status, "hours": max(0, point["remaining"]) / dollars,
+            "observed_at": point["ts"],
             "rate": dollars / baseline * 100, "dollars": dollars,
+            "full_hours": baseline / dollars,
             "seconds": agg["seconds"], "samples": agg["samples"], "credit": True}

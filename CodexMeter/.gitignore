@@ -3,4 +3,5 @@ __pycache__/
 .venv/
 *.log
 observations.json
+last_forecasts.json
 *.tmp

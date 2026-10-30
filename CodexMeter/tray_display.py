@@ -5,9 +5,11 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 def time_label(result):
-    if result["status"] != "ready":
+    if result["status"] != "ready" and not (result.get("historical") and "hours" in result):
         return {"learning": "...", "stale": "--", "unavailable": "--",
                 "exhausted": "0m"}[result["status"]]
+    if result["hours"] <= 0 and result["status"] != "ready":
+        return "0m"
     minutes = max(1, math.ceil(result["hours"] * 60))
     if minutes < 60:
         return f"{minutes}m"

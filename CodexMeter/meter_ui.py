@@ -16,6 +16,7 @@ from tray_display import make_icon, time_label
 from credits import fetch_credits, credits_text
 from history_archive import archive_on_startup
 from orchestration import orchestration_forecast
+from last_forecast import LastForecast
 
 TITLE = "Codex Meter"
 BG, INK, MUTED, ACCENT = "#f5f7f8", "#20272d", "#626c74", "#197a68"
@@ -31,15 +32,48 @@ def duration(hours):
 
 def forecast_text(result):
     status = result["status"]
+    if result.get("historical") and "hours" in result:
+        return ("上限到達" if result["hours"] <= 0 else duration(result["hours"])) + " ※"
     if status == "ready":
         return duration(result["hours"])
     return {"learning": "計測中", "stale": "更新待ち", "unavailable": "—",
             "exhausted": "上限到達"}[status]
 
 
-def composition_text(signature):
-    return " + ".join(f"{model.removeprefix('gpt-')} / {effort} ×{count}"
-                      for (model, effort), count in signature) or "稼働記録なし"
+def model_text(model):
+    name = model.removeprefix("gpt-")
+    generation, separator, family = name.rpartition("-")
+    symbol = {"sol": "🌞", "terra": "🌍", "luna": "🌙", "astra": "⭐"}.get(family)
+    return generation + symbol if model.startswith("gpt-") and separator and symbol else name
+
+
+def effort_text(effort):
+    return {"none": "無", "minimal": "最小", "low": "低", "medium": "中",
+            "high": "高", "xhigh": "最高", "max": "最大", "ultra": "超",
+            "default": "既定"}.get(effort, effort)
+
+
+def composition_text(signature, *, full=False):
+    return " ＋ ".join((f"{model} / {effort} ×{count}" if full else
+                        f"{model_text(model)} {effort_text(effort)}×{count}")
+                       for (model, effort), count in signature) or "稼働記録なし"
+
+
+def rate_text(result):
+    return (f"{result['rate']:.2f}" + (" ※" if result.get("historical") else "")
+            if "rate" in result else forecast_text(result))
+
+
+def full_text(result):
+    return (duration(result["full_hours"]) + (" ※" if result.get("historical") else "")
+            if "full_hours" in result else forecast_text(result))
+
+
+def previous_note(result):
+    if result.get("historical"):
+        when = datetime.fromtimestamp(result["observed_at"]).strftime("%m/%d %H:%M")
+        return f"※前回値 {when}時点"
+    return ""
 
 
 class Meter:
@@ -50,6 +84,7 @@ class Meter:
         self.messages = queue.Queue()
         self.reader = LogReader()
         self.store = Observations()
+        self.last_forecasts = LastForecast(data_directory() / "last_forecasts.json")
         self.view = build_view(self.store.events, history=self.store.history)
         self.credits = {"status": "loading"}
         self.credit_requests = queue.Queue()
@@ -330,7 +365,8 @@ class Meter:
             period = f"{minutes // 1440}日" if minutes >= 1440 else f"{minutes / 60:g}時間"
             label.configure(text=f"{period}枠 · 残り")
             expired = now >= window["reset"]
-            number.configure(text="更新待ち" if expired else f"{100 - window['used']:g}%")
+            old = expired or now - point["ts"] > 300
+            number.configure(text=f"{100 - window['used']:g}%" + (" ※" if old else ""))
             when = datetime.fromtimestamp(window["reset"]).strftime("%m/%d %H:%M")
             reset.configure(text=f"リセット {when}" + (" · 要更新" if expired else ""))
             self.paint_bar(slot)
@@ -344,16 +380,18 @@ class Meter:
         if combined:
             self.render_orchestration(bucket, now)
         for index, model in enumerate(self.view["models"] if not combined else []):
-            results = [forecast(self.view, model, bucket, slot, now) for slot in ("primary", "secondary")]
+            results = [self.last_forecasts.present(("model", model, bucket, slot),
+                       forecast(self.view, model, bucket, slot, now)) for slot in ("primary", "secondary")]
             measured = max((self.view["aggregates"].get((model, bucket, s), {}).get("seconds", 0)
                             for s in ("primary", "secondary")), default=0)
             measured = max(measured, results[0].get("seconds", 0))
-            rate = f"{results[0]['rate']:.2f}" if results[0]["status"] == "ready" else forecast_text(results[0])
+            rate = rate_text(results[0])
             iid = f"model-{index}"
             self.rows[iid] = (model, results)
-            self.table.insert("", "end", iid=iid, values=(f"{model[0]} / {model[1]}", model[1],
+            self.table.insert("", "end", iid=iid, values=(f"{model_text(model[0])} {effort_text(model[1])}", effort_text(model[1]),
                               *(forecast_text(r) for r in results), f"{measured / 60:.0f}分",
                               f"{self.view.get('usage', {}).get(model, {}).get('total_tokens', 0):,}", rate,
+                              full_text(results[0]) if "full_hours" in results[0] else
                               forecast_text(full_forecast(self.view, model, bucket))),
                               tags=("current",) if index == 0 else ())
         if selected and (selected[0] in self.rows or selected[0] in self.orchestration_rows):
@@ -371,14 +409,20 @@ class Meter:
         else:
             self.status.configure(text="トークン記録中 · 利用枠は未取得" if self.view.get("usage") else "使用量の記録待ち")
         if self.tray:
-            result = orchestration_forecast(self.view, bucket, now=now, recent=True)
-            signature = (time_label(result), result["status"])
+            result = self.last_forecasts.present(("composition", None, bucket, "primary"),
+                     orchestration_forecast(self.view, bucket, now=now, recent=True))
+            icon_status = ("stale" if result.get("historical") and result["status"] != "exhausted"
+                           else result["status"])
+            signature = (time_label(result), icon_status)
             if signature != self.last_icon_signature:
                 self.tray.icon = make_icon(*signature)
                 self.last_icon_signature = signature
             short = point.get("primary")
             weekly = point.get("secondary")
-            parts = [TITLE, credits_text(self.credits, now)]
+            parts = [TITLE, f"全体: {forecast_text(result)}"]
+            if previous_note(result):
+                parts.append(previous_note(result))
+            parts.append(credits_text(self.credits, now))
             for label, w in (("短期", short), ("週間", weekly)):
                 if w:
                     if now < w["reset"]:
@@ -386,13 +430,13 @@ class Meter:
                         hours, mins = divmod(wait, 60)
                         parts.append(f"{label}: 残り{100 - w['used']:g}% · 更新まで{hours}h{mins:02d}m")
                     else:
-                        parts.append(f"{label}: 更新待ち")
-            parts.append(f"全体・直近15分: {forecast_text(result)}")
+                        parts.append(f"{label}: 前回{100 - w['used']:g}% · 更新待ち")
             parts.append(composition_text(self.view.get("orchestration", {}).get("active", ())))
             if stamp and now - stamp > 300:
                 parts.append("過去の観測値")
             self.tray.title = "\n".join(parts).encode("utf-16-le")[:254].decode("utf-16-le", errors="ignore")
             self.check_notifications(point, now)
+        self.last_forecasts.save()
         self.selection()
 
     def render_orchestration(self, bucket, now):
@@ -401,17 +445,20 @@ class Meter:
         signatures = {key[0] for key in data.get("aggregates", {}) if key[1] == bucket}
         if active:
             signatures.add(active)
-        rows = [("recent", None, "全体・直近15分（活動中の平均）")]
+        current = ("構成未確認" if self.view.get("incomplete") else
+                   composition_text(active) if active else "稼働なし")
+        rows = [("recent", None, "全体：" + current)]
         rows.extend((f"composition-{index}", signature,
                      ("現在: " if signature == active else "") + composition_text(signature))
                     for index, signature in enumerate(sorted(signatures, key=lambda s: (s != active, s))))
         for iid, signature, label in rows:
-            results = [orchestration_forecast(self.view, bucket, slot, now,
-                       signature=signature, recent=signature is None) for slot in ("primary", "secondary")]
+            results = [self.last_forecasts.present(("composition", signature, bucket, slot),
+                       orchestration_forecast(self.view, bucket, slot, now,
+                       signature=signature, recent=signature is None)) for slot in ("primary", "secondary")]
             agg = (data.get("recent", {}).get((bucket, "primary"), {}) if signature is None else
                    data.get("aggregates", {}).get((signature, bucket, "primary"), {}))
-            full = duration(results[0]["full_hours"]) if results[0]["status"] == "ready" else forecast_text(results[0])
-            rate = f"{results[0]['rate']:.2f}" if results[0]["status"] == "ready" else forecast_text(results[0])
+            full = full_text(results[0])
+            rate = rate_text(results[0])
             self.orchestration_rows[iid] = (signature, results)
             self.table.insert("", "end", iid=iid, values=(label, "", forecast_text(results[0]),
                               forecast_text(results[1]), f"{agg.get('seconds', 0) / 60:.0f}分",
@@ -425,16 +472,24 @@ class Meter:
         if selected and selected[0] in self.orchestration_rows:
             signature, results = self.orchestration_rows[selected[0]]
             parts = []
+            if signature is None:
+                active = self.view.get("orchestration", {}).get("active", ())
+                current = ("構成未確認" if self.view.get("incomplete") else
+                           composition_text(active, full=True) if active else "なし")
+                parts.append("稼働中：" + current)
             for label, result in zip(("短期", "週間"), results):
                 text = f"{label}: {forecast_text(result)}"
-                if result["status"] == "ready":
+                if "rate" in result:
                     text += f" · {result['rate']:.2f}%/時"
                     if result.get("reset_first"):
                         text += " · リセットが先"
                 parts.append(text)
+                if previous_note(result):
+                    parts.append(previous_note(result))
             if signature is None:
-                parts.append("直近15分の活動区間。構成変更を含む現在ペースの目安")
+                parts.append("最終観測までの15分の活動区間。構成変更を含むペース")
             else:
+                parts.insert(0, composition_text(signature, full=True))
                 parts.append("同じモデル・推論・人数の全期間平均。親子・別チャットを含む")
             if self.view.get("incomplete"):
                 parts.append("読取不足のため予測停止")
@@ -444,13 +499,15 @@ class Meter:
             self.detail.configure(text="")
             return
         model, results = self.rows[selected[0]]
-        texts = []
+        texts = [f"{model[0]} / {model[1]}"]
         for label, slot in (("100%使用時間", "primary"), ("週間100%使用時間", "secondary")):
             full = full_forecast(self.view, model, self.bucket.get(), slot)
             if full["status"] == "ready":
                 texts.append(f"{label}: {duration(full['hours'])}")
         for name, result in zip(("短期", "週間"), results):
-            if result["status"] == "ready":
+            if "rate" in result:
+                if previous_note(result):
+                    texts.append(previous_note(result))
                 if result.get("credit"):
                     texts.append(f"OpenRouter: ${result['dollars']:.4f}/時間 · 計測開始残高に対する {result['rate']:.2f}%/時間")
                     continue
