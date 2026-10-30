@@ -1,5 +1,6 @@
 """Verified history rotation with a small local forecast checkpoint."""
 import hashlib
+import json
 import os
 import shutil
 import time
@@ -8,6 +9,45 @@ from pathlib import Path
 
 ARCHIVE_DIRECTORY = Path("N:/CodexMeter")
 ARCHIVE_THRESHOLD = 100_000_000
+
+
+def approval_file():
+    return Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))) / "CodexMeter" / "archive_destination.json"
+
+
+def register_archive_destination(destination, approval_path=None):
+    """Remember an explicitly approved resolved destination, without copying history."""
+    destination = Path(destination)
+    if not destination.is_absolute() or not Path(destination.anchor).is_dir():
+        raise OSError("退避先は接続済みドライブの絶対パスで指定してください。")
+    resolved = destination.resolve()
+    if resolved.exists() and not resolved.is_dir():
+        raise OSError("退避先にファイルが存在します。フォルダを指定してください。")
+    approval_path = approval_file() if approval_path is None else Path(approval_path)
+    approval_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = approval_path.with_name(approval_path.name + "." + uuid.uuid4().hex + ".tmp")
+    try:
+        with temporary.open("x", encoding="utf-8") as output:
+            json.dump({"version": 1, "destination": str(resolved)}, output)
+            output.flush()
+            os.fsync(output.fileno())
+        temporary.replace(approval_path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return resolved
+
+
+def approved_destination(destination, approval_path=None):
+    approval_path = approval_file() if approval_path is None else Path(approval_path)
+    try:
+        saved = json.loads(approval_path.read_text(encoding="utf-8"))
+        resolved = destination.resolve()
+        if (isinstance(saved, dict) and saved.get("version") == 1
+                and saved.get("destination") == str(resolved)):
+            return resolved
+    except (OSError, ValueError):
+        pass
+    return None
 
 
 def pack(mapping):
@@ -72,7 +112,8 @@ def digest(path):
     return result.digest()
 
 
-def archive_on_startup(store, destination=ARCHIVE_DIRECTORY, threshold=ARCHIVE_THRESHOLD, now=None):
+def archive_on_startup(store, destination=ARCHIVE_DIRECTORY, threshold=ARCHIVE_THRESHOLD, now=None,
+                       approval_path=None):
     from core import DAY, build_view
     now = time.time() if now is None else now
     destination = Path(destination)
@@ -82,6 +123,11 @@ def archive_on_startup(store, destination=ARCHIVE_DIRECTORY, threshold=ARCHIVE_T
         # Check the drive before mkdir, so a disconnected share is never substituted locally.
         if not Path(destination.anchor).is_dir():
             return "offline"
+        if not destination.is_absolute():
+            return "untrusted"
+        destination = approved_destination(destination, approval_path)
+        if destination is None:
+            return "untrusted"
         view = build_view(store.events, now, history=store.history)
         cutoff = now - DAY
         while True:
@@ -121,3 +167,16 @@ def archive_on_startup(store, destination=ARCHIVE_DIRECTORY, threshold=ARCHIVE_T
         return "archived"
     except OSError:
         return "failed"
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="履歴の退避先を登録します。履歴のコピーは行いません。")
+    parser.add_argument("--register", required=True, type=Path, metavar="退避先",
+                        help="確認済みの退避先の絶対パス（例: N:\\CodexMeter）")
+    args = parser.parse_args()
+    try:
+        resolved = register_archive_destination(args.register)
+    except OSError as exc:
+        parser.exit(1, f"登録できませんでした: {exc}\n")
+    print(f"退避先を登録しました: {resolved}")

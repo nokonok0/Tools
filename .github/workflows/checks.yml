@@ -1,0 +1,47 @@
+name: テストと依存ライブラリ検査
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # 毎週月曜日の日本時間9時。コード変更がなくても新しい脆弱性を検査する。
+    - cron: "0 0 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  codex-meter:
+    name: CodexMeter
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: CodexMeter
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - name: ソースを取得
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: uvとPythonを準備
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.11.6"
+          python-version: "3.11"
+          enable-cache: false
+      - name: ロックファイルどおりに依存ライブラリを準備
+        run: uv sync --locked --python 3.11
+      - name: 単体テスト
+        run: uv run --locked python -m unittest discover -s tests
+      - name: 依存ライブラリの既知の脆弱性を検査
+        # Windows専用の依存条件を取りこぼさないよう、監査もWindowsで行う。
+        run: |
+          $auditRequirements = Join-Path $env:RUNNER_TEMP "codex-meter-requirements.txt"
+          uv export --locked --no-emit-project --format requirements-txt --output-file $auditRequirements
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          uvx --from pip-audit==2.10.1 pip-audit --require-hashes --disable-pip --requirement $auditRequirements

@@ -4,4 +4,5 @@ __pycache__/
 *.log
 observations.json
 last_forecasts.json
+archive_destination.json
 *.tmp

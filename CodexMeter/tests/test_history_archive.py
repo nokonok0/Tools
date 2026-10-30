@@ -5,12 +5,20 @@ from pathlib import Path
 from unittest.mock import patch
 
 from core import DAY, Observations, build_view, full_forecast
-from history_archive import archive_on_startup
+from history_archive import archive_on_startup, register_archive_destination
 from test_core import observations
 from test_credit_forecast import events, MODEL
 
 
 class ArchiveTests(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.approval_path = Path(folder.name) / "approval.json"
+        approval = patch("history_archive.approval_file", return_value=self.approval_path)
+        approval.start()
+        self.addCleanup(approval.stop)
+
     def test_no_expiry_or_event_limit(self):
         with tempfile.TemporaryDirectory() as folder:
             store = Observations(Path(folder) / "history.json")
@@ -41,7 +49,52 @@ class ArchiveTests(unittest.TestCase):
         store.add(rows, now=1601)
         store.save(force=True)
         destination = Path(folder.name) / "archive"
+        register_archive_destination(destination)
         return store, destination
+
+    def test_unregistered_or_invalid_destination_never_copies_or_prunes(self):
+        store, destination = self.rotate(events())
+        original = store.path.read_bytes()
+        for contents in (None, "not json", "[]", '{"version": 1}',
+                         '{"version": 2, "destination": "ignored"}'):
+            with self.subTest(contents=contents):
+                self.approval_path.unlink(missing_ok=True)
+                if contents is not None:
+                    self.approval_path.write_text(contents, encoding="utf-8")
+                with patch("history_archive.shutil.copyfileobj") as copy:
+                    self.assertEqual(archive_on_startup(store, destination, 1, now=3 * DAY), "untrusted")
+                    copy.assert_not_called()
+                self.assertFalse(destination.exists())
+                self.assertEqual(store.path.read_bytes(), original)
+
+    def test_remapped_destination_is_rejected(self):
+        store, destination = self.rotate(events())
+        original = store.path.read_bytes()
+        different_share = destination.parent / "different-share"
+        with patch("history_archive.Path.resolve", return_value=different_share):
+            self.assertEqual(archive_on_startup(store, destination, 1, now=3 * DAY), "untrusted")
+        self.assertFalse(different_share.exists())
+        self.assertEqual(store.path.read_bytes(), original)
+
+    def test_approved_resolved_path_is_used_for_copy(self):
+        store, destination = self.rotate(events())
+        alias = destination.parent / "mapped-drive"
+        resolved = destination.resolve()
+        with patch("history_archive.Path.resolve", return_value=resolved):
+            self.assertEqual(archive_on_startup(store, alias, 1, now=3 * DAY), "archived")
+        self.assertFalse(alias.exists())
+        self.assertEqual(len(list(destination.glob("*.json"))), 1)
+
+    def test_registration_never_creates_remote_destination_or_copies_history(self):
+        destination = self.approval_path.parent / "not-created"
+        self.assertEqual(register_archive_destination(destination), destination.resolve())
+        self.assertFalse(destination.exists())
+        self.assertEqual(json.loads(self.approval_path.read_text())["destination"], str(destination.resolve()))
+
+    def test_relative_registration_is_rejected(self):
+        with self.assertRaises(OSError):
+            register_archive_destination(Path("archive"))
+        self.assertFalse(self.approval_path.exists())
 
     def test_copy_and_checkpoint_restart_and_reimport(self):
         rows = observations() + [{"kind": "end", "ts": 1241, "session": "one", "turn": "t"}]

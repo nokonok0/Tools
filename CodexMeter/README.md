@@ -79,7 +79,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Install-Startup.ps1
 
 日数・件数による自動削除は行いません。保存は原子的な書き込みで行い、最大2分に一度と終了時に実施します。元のログには会話が含まれる場合がありますが、取り込むのは上記の構造化された情報だけです。既存のCodexファイルは変更しません。旧版が既に削除した記録は復元しません。
 
-起動時に `observations.json` が100MB（100,000,000バイト）を超え、Nドライブへ接続できる場合は `N:\CodexMeter\` に日時・一意ID付きJSONとして退避します。退避先の親ドライブの存在確認、コピー、書き込み完了、SHA-256一致確認を経てからローカルを更新します。未接続・失敗時はローカル保存を継続します。起動時の読取が不完全な場合も退避を見送ります。
+起動時に `observations.json` が100MB（100,000,000バイト）を超え、登録済みの退避先と一致する場合は `N:\CodexMeter\` に日時・一意ID付きJSONとして退避します。ドライブ文字だけで判断せず、Windowsが解決した実パス（ネットワークドライブならUNCパス）を登録時と比較します。コピーにも実パスを使います。未登録・接続先変更・未接続・失敗・読取不完全の場合は退避せず、ローカル保存を続けます。コピー、書き込み完了、SHA-256一致確認を経てからローカルを更新します。
+
+初回・意図した共有先への変更時は、エクスプローラーなどでNドライブの共有先と閲覧権限を確認し、CodexMeterフォルダで次を実行してください。登録はローカルの `%LOCALAPPDATA%\CodexMeter\archive_destination.json` のみを更新し、履歴をコピーしたり共有先にフォルダを作ったりしません。
+
+```powershell
+uv run --locked python history_archive.py --register N:\CodexMeter
+```
+
+登録後はアプリの次回起動から退避先を確認します。同じUNC名のサーバーや共有自体が置き換わった場合の識別・アクセス権の保証は行いません。退避ファイルには利用履歴・残高情報が含まれるため、共有先の閲覧権限も管理してください。
 
 退避はその時点のローカルファイル全体のスナップショットです。ローカルには直近1日分と境界をまたぐ作業を残し、それより古い記録はモデル別の使用時間・消費量・区間数・トークン数などの累計に置き換えます。退避後も全期間平均の推定を継続し、元ログの再読込による二重加算を防ぎます。退避ファイル同士には重複があるため、そのまま合算しないでください。履歴閲覧の専用画面はなく、JSONを直接参照できます。
 
@@ -88,6 +96,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Install-Startup.ps1
 ```powershell
 uv run --locked python -m unittest discover -s tests
 ```
+
+Pillowはセキュリティ修正版の13.0.0以降を使います。インストール済み環境の更新は `uv sync --locked --python 3.11` の後、アプリを終了・再起動して反映してください。
 
 仕様の参考: [Codex App Server](https://learn.chatgpt.com/docs/app-server)（`account/rateLimits/read`と利用枠の期間の扱い）。
 

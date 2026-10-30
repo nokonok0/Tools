@@ -246,6 +246,8 @@ class Meter:
                             added = added or result == "archived"
                             if result in ("failed", "offline"):
                                 self.messages.put(("error", "履歴の退避先に接続できないか退避に失敗しました。ローカルで保存を続けます。"))
+                            elif result == "untrusted":
+                                self.messages.put(("error", "履歴の退避先が未登録か登録先と異なります。退避せずローカルで保存を続けます。"))
                         archive_checked = True
                     while not self.credit_observations.empty():
                         try:
