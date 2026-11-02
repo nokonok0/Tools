@@ -11,12 +11,13 @@ import tkinter as tk
 from datetime import datetime
 from tkinter import ttk, messagebox
 
-from core import LogReader, Observations, build_view, data_directory, forecast, full_forecast
+from core import LogReader, Observations, build_view, data_directory, default_home, forecast, full_forecast
 from tray_display import make_icon, time_label
 from credits import fetch_credits, credits_text
 from history_archive import archive_on_startup
 from orchestration import orchestration_forecast
 from last_forecast import LastForecast
+from delegation import load_delegation, DelegationNotices, profile_text
 
 TITLE = "Codex Meter"
 BG, INK, MUTED, ACCENT = "#f5f7f8", "#20272d", "#626c74", "#197a68"
@@ -86,6 +87,9 @@ class Meter:
         self.store = Observations()
         self.last_forecasts = LastForecast(data_directory() / "last_forecasts.json")
         self.view = build_view(self.store.events, history=self.store.history)
+        self.delegation = {"status": "loading", "groups": [], "comparisons": [], "alerts": [],
+                           "count": 0, "passes": 0, "rework": 0, "excluded": 0, "pending": 0, "errors": 0}
+        self.delegation_notices = DelegationNotices(data_directory() / "delegation_notifications.json")
         self.credits = {"status": "loading"}
         self.credit_requests = queue.Queue()
         self.credit_observations = queue.Queue()
@@ -161,19 +165,27 @@ class Meter:
         table_heading.grid(row=2, column=0, sticky="ew", pady=(0, 3))
         self.display_mode = tk.StringVar(value="全体・構成")
         modes = ttk.Combobox(table_heading, textvariable=self.display_mode,
-                             values=("全体・構成", "モデル単独"), state="readonly", width=12)
+                             values=("全体・構成", "モデル単独", "委任の実績"), state="readonly", width=12)
         modes.pack(side="left")
         modes.bind("<<ComboboxSelected>>", lambda _: self.render())
-        ttk.Label(table_heading, text="連続使用時の目安", style="Muted.TLabel").pack(side="right")
+        self.table_note = ttk.Label(table_heading, text="連続使用時の目安", style="Muted.TLabel")
+        self.table_note.pack(side="right")
         table_frame = ttk.Frame(outer)
         table_frame.grid(row=3, column=0, sticky="nsew")
         cols = ("model", "effort", "primary", "secondary", "measured", "tokens", "rate", "full")
-        self.table = ttk.Treeview(table_frame, columns=cols, displaycolumns=("model", "full", "primary", "rate", "measured", "tokens", "secondary"),
+        self.usage_columns = ("model", "full", "primary", "rate", "measured", "tokens", "secondary")
+        self.delegation_columns = ("task", "candidate", "count", "passed", "rework", "observed", "elapsed", "comparison")
+        self.table = ttk.Treeview(table_frame, columns=cols + self.delegation_columns, displaycolumns=self.usage_columns,
                                   show="headings", selectmode="browse", height=5)
         titles = ("モデル / 推論", "推論", "残り推定時間", "週間枠の推定時間", "実測時間", "記録トークン", "消費率 (%/時)", "100%使用時間")
         for col, name, width in zip(cols, titles, (210, 65, 130, 115, 80, 100, 120, 130)):
             self.table.heading(col, text=name)
             self.table.column(col, width=width, minwidth=60, stretch=col in ("model", "primary", "secondary"))
+        for col, title, width in zip(self.delegation_columns,
+                                    ("作業", "モデル / 推論", "件数", "合格", "手直し", "親＋子トークン", "所要時間", "変更前後"),
+                                    (120, 85, 40, 45, 45, 100, 70, 75)):
+            self.table.heading(col, text=title)
+            self.table.column(col, width=width, minwidth=40, stretch=col == "task")
         horizontal = ttk.Scrollbar(table_frame, orient="horizontal", command=self.table.xview)
         horizontal.pack(side="bottom", fill="x")
         self.table.configure(xscrollcommand=horizontal.set)
@@ -239,6 +251,7 @@ class Meter:
                     except queue.Empty:
                         break
                 try:
+                    self.messages.put(("delegation", load_delegation(default_home() / "delegation")))
                     added = self.store.add(self.reader.poll(force=forced))
                     if not archive_checked:
                         if not self.reader.truncated:
@@ -376,12 +389,18 @@ class Meter:
         self.table.delete(*self.table.get_children())
         self.rows = {}
         self.orchestration_rows = {}
+        self.delegation_rows = {}
+        delegated = self.display_mode.get() == "委任の実績"
         combined = self.display_mode.get() == "全体・構成"
+        self.table.configure(displaycolumns=self.delegation_columns if delegated else self.usage_columns)
+        self.table_note.configure(text="通常作業・同じ条件ごと" if delegated else "連続使用時の目安")
         self.table.heading("model", text="構成 / 推論 ×人数" if combined else "モデル / 推論")
         self.table.heading("tokens", text="区間数" if combined else "記録トークン")
-        if combined:
+        if delegated:
+            self.render_delegation()
+        elif combined:
             self.render_orchestration(bucket, now)
-        for index, model in enumerate(self.view["models"] if not combined else []):
+        for index, model in enumerate(self.view["models"] if not combined and not delegated else []):
             results = [self.last_forecasts.present(("model", model, bucket, slot),
                        forecast(self.view, model, bucket, slot, now)) for slot in ("primary", "secondary")]
             measured = max((self.view["aggregates"].get((model, bucket, s), {}).get("seconds", 0)
@@ -396,7 +415,7 @@ class Meter:
                               full_text(results[0]) if "full_hours" in results[0] else
                               forecast_text(full_forecast(self.view, model, bucket))),
                               tags=("current",) if index == 0 else ())
-        if selected and (selected[0] in self.rows or selected[0] in self.orchestration_rows):
+        if selected and (selected[0] in self.rows or selected[0] in self.orchestration_rows or selected[0] in self.delegation_rows):
             self.table.selection_set(selected[0])
         stamp = self.view["observed_at"]
         if stamp:
@@ -410,6 +429,16 @@ class Meter:
             self.status.configure(text=text)
         else:
             self.status.configure(text="トークン記録中 · 利用枠は未取得" if self.view.get("usage") else "使用量の記録待ち")
+        if delegated:
+            data = self.delegation
+            if data["status"] in ("loading", "missing"):
+                text = "委任記録を確認中…" if data["status"] == "loading" else "委任記録はまだありません"
+            else:
+                text = f"通常作業 {data['count']}件 · 合格 {data['passes']}件 · 手直し {data['rework']}件"
+                text += f" · 実行中 {data['pending']}件 · 初期設定等の除外 {data['excluded']}件"
+                if data["errors"]:
+                    text += f" · 読取不完全 {data['errors']}件"
+            self.status.configure(text=text)
         if self.tray:
             result = self.last_forecasts.present(("composition", None, bucket, "primary"),
                      orchestration_forecast(self.view, bucket, now=now, recent=True))
@@ -441,6 +470,43 @@ class Meter:
         self.last_forecasts.save()
         self.selection()
 
+    def render_delegation(self):
+        for group in self.delegation["groups"]:
+            iid = "delegation-" + group["id"]
+            model, _, effort = group["model"].rpartition(":")
+            values = [""] * 8 + [profile_text(group["profile"]),
+                      f"{model_text(model)} {effort_text(effort)}", group["count"],
+                      f"{group['passes']}/{group['count']}", group["rework"],
+                      f"{group['median_tokens']:,.0f}" if group["median_tokens"] is not None else "未取得",
+                      duration(group["median_seconds"] / 3600) if group["median_seconds"] is not None else "未取得",
+                      "参考比較" if group["comparison"] and group["comparison"]["ready"] else "記録不足"]
+            self.table.insert("", "end", iid=iid, values=values)
+            self.delegation_rows[iid] = group
+        if not self.table.selection() and self.delegation_rows:
+            self.table.selection_set(next(iter(self.delegation_rows)))
+
+    def delegation_detail(self, group):
+        risk = {"low": "低", "medium": "中", "high": "高"}[group["risk"]]
+        parts = [f"{group['model']} · リスク{risk} · 手順 {group['revision'][:8]}",
+                 f"合格率 {100 * group['passes'] / group['count']:.0f}% · 手直し率 {100 * group['rework'] / group['count']:.0f}%"]
+        observed = []
+        for key, label in (("median_parent", "親"), ("median_child", "子")):
+            value = group[key]
+            observed.append(f"{label} {value:,.0f}" if value is not None else f"{label} 未取得")
+        parts.append("トークン中央値：" + "／".join(observed) + f"（両者取得 {group['observed_count']}/{group['count']}件）")
+        comparison = group["comparison"]
+        if comparison and comparison["ready"]:
+            parts.append(f"参考比較：変更前{comparison['before']['count']}件→後{comparison['after']['count']}件")
+            parts.append(f"合格率 {comparison['pass_change']:+.0f}pt · 手直し率 {comparison['rework_change']:+.0f}pt")
+            for key, label in (("token_change", "トークン"), ("time_change", "時間")):
+                value = comparison[key]
+                parts.append(f"{label} {value:+.1f}%" if value is not None else f"{label}比較は記録不足")
+            parts.append("同分類・同リスクの観測比較。作業難易度の差は未補正")
+        else:
+            parts.append("変更前後の比較は記録不足（確認済みの変更と前後各3件が必要）")
+        parts.append("トークン・時間は中央値。課金額ではありません")
+        return " / ".join(parts)
+
     def render_orchestration(self, bucket, now):
         data = self.view.get("orchestration", {})
         active = data.get("active", ())
@@ -471,6 +537,12 @@ class Meter:
 
     def selection(self, _=None):
         selected = self.table.selection()
+        if selected and selected[0] in self.delegation_rows:
+            self.detail.configure(text=self.delegation_detail(self.delegation_rows[selected[0]]))
+            return
+        if self.display_mode.get() == "委任の実績":
+            self.detail.configure(text="通常作業を記録すると表示します。初期設定・比較試験・未分類は集計対象外です。")
+            return
         if selected and selected[0] in self.orchestration_rows:
             signature, results = self.orchestration_rows[selected[0]]
             parts = []
@@ -535,6 +607,9 @@ class Meter:
             if kind == "view":
                 self.view = value
                 changed = True
+            elif kind == "delegation":
+                self.delegation = value
+                changed = True
             elif kind == "credits":
                 if value["status"] == "ready":
                     self.credits = value
@@ -565,6 +640,12 @@ class Meter:
                 self.refresh_button.configure(state="normal")
         if changed or int(time.time()) % 30 == 0:
             self.render()
+        if self.tray_available:
+            for notice in self.delegation_notices.update(self.delegation):
+                try:
+                    self.tray.notify(notice["text"], TITLE)
+                except Exception:
+                    pass
         self.dismiss_if_unfocused()
         self.root.after(500, self.tick)
 
