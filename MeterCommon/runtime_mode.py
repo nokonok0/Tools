@@ -9,11 +9,18 @@ import time
 from pathlib import Path
 
 
+def runtime_file():
+    """Windowsは従来どおりLOCALAPPDATA。LinuxはXDGの保存先を使い、Windowsと混ぜない。"""
+    if os.name != 'nt':
+        base = Path(os.environ.get('XDG_DATA_HOME') or str(Path.home() / '.local' / 'share'))
+    else:
+        base = Path(os.environ.get('LOCALAPPDATA', str(Path.home() / 'AppData' / 'Local')))
+    return base / 'MeterCommon' / 'runtime.json'
+
+
 class RuntimeMode:
     def __init__(self, path=None):
-        self.path = Path(path) if path is not None else (
-            Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local'))
-            / 'MeterCommon' / 'runtime.json')
+        self.path = Path(path) if path is not None else runtime_file()
         self.lightweight = False
         self._stamp = None
         self.reload()

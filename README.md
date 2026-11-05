@@ -13,6 +13,12 @@ Windowsで日常的に使う小さなツールをまとめたリポジトリで�
 
 Codex MeterとDeepSeek Meterは、パネルまたはトレイから「通常／軽量」を一括切替できます。共通コードの`MeterCommon/`を各Meterと同じ親フォルダに置いてください。
 
+## プラットフォーム
+
+Windowsを既定とします。Windows向けの手順・CI・`uv.lock`・保存先（`%LOCALAPPDATA%`）は変えていません。Linux（Ubuntu/GNOME）で動かす場合だけ[LINUX.md](LINUX.md)を参照してください。
+
+Linux用の環境は`.venv-linux`、保存先は`~/.local/share`に分けているため、同じフォルダを2つのOSで共有してもWindows側と取り違えません。Monitor Brightness SyncとFloatingEditKeysはWindows専用です。
+
 ## 個人データ
 
 公開対象はコード・説明書・テストです。Codex・DeepSeekの会話、認証情報、使用量履歴、通知履歴を含めません。

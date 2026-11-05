@@ -1,5 +1,7 @@
 # Tools 要件
 
+- 2026-11-06: Codex MeterとDeepSeek MeterをLinux（Ubuntu/GNOME）でも動かせるようにする。Windowsを既定のまま変えず、Linux用の仮想環境`.venv-linux`と保存先`~/.local/share`を分けて同じフォルダでも競合させない。Windowsの手順・CI・`uv.lock`・`%LOCALAPPDATA%`は変更せず、Linux固有の手順は[LINUX.md](LINUX.md)と`tools/install-linux.sh`にまとめる。
+
 - 2026-11-04: Codex Meterのモデル単独表は稼働中のモデル・推論設定を先頭に強調し、その他をGPTの世代が新しい順・モデル別・推論レベル順に並べる。
 - 2026-11-03: DeepSeek Meterを追加。残高・枯渇までの推定時間・モデル別トークンを表示し、残高取得だけにDSHの保存済み認証を使う。
 
@@ -97,6 +99,8 @@
 - セッション一覧はIDで重複を除く。同名でも別IDの会話は残し、ページ送りのカーソルと保存済みの履歴は変更しない。
 
 ## 変更履歴
+
+- 2026-11-06: Codex MeterとDeepSeek MeterのLinux対応を追加。`.venv-linux`と`~/.local/share`へ分離し、保存先の決定と起動スクリプトを`os.name`で分岐する。ツールチップのUTF-16切り詰めはWindowsのみに限定する。Windowsの手順・CI・ロックファイルは変更せず、`LINUX.md`と`tools/install-linux.sh`を追加する。
 
 - 2026-11-03: Codex Meterのパネルを560×310へ縮小し、暗色基調のデザインに変更。表の下の灰色文字を廃止し、OpenRouter残高をヘッダーへ移す。7日枠に「5h枠 あとN回」を追加する。
 

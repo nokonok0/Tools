@@ -564,7 +564,11 @@ class Meter(RuntimeControls):
             parts.append(composition_text(self.view.get("orchestration", {}).get("active", ())))
             if stamp and now - stamp > 300:
                 parts.append("過去の観測値")
-            self.tray.title = "\n".join(parts).encode("utf-16-le")[:254].decode("utf-16-le", errors="ignore")
+            title = "\n".join(parts)
+            if sys.platform == "win32":
+                # Windowsのツールチップ長に合わせてUTF-16で切り詰める。
+                title = title.encode("utf-16-le")[:254].decode("utf-16-le", errors="ignore")
+            self.tray.title = title
             self.check_notifications(point, now)
         self.last_forecasts.save()
         self.selection()

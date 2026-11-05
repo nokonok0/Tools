@@ -12,7 +12,12 @@ ARCHIVE_THRESHOLD = 100_000_000
 
 
 def approval_file():
-    return Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))) / "CodexMeter" / "archive_destination.json"
+    # Windowsは従来どおりLOCALAPPDATA。LinuxはXDGの保存先を使う。
+    if os.name != "nt":
+        base = Path(os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share"))
+    else:
+        base = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
+    return base / "CodexMeter" / "archive_destination.json"
 
 
 def register_archive_destination(destination, approval_path=None):

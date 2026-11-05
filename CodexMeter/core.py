@@ -28,6 +28,10 @@ def default_home():
 
 
 def data_directory():
+    # Windowsは従来どおりLOCALAPPDATA。LinuxはXDGの保存先を使い、Windowsと混ぜない。
+    if os.name != "nt":
+        base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+        return Path(base) / "CodexMeter"
     return Path(os.environ.get("LOCALAPPDATA", str(Path.home() / ".local"))) / "CodexMeter"
 
 

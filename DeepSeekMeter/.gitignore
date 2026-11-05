@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .venv/
+.venv-linux/
 *.log
 observations.json
 notifications.json
