@@ -10,6 +10,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from statistics import median
 
 DAY = 86400
 MAX_READ = 2 * 1024 * 1024
@@ -356,10 +357,57 @@ def build_view(events, now=None, incomplete=False, history=None):
             "credit_points": credits}
     from orchestration import build_orchestration
     view["orchestration"] = build_orchestration(events, intervals, changes, now, incomplete)
+    view["weekly_runs"] = {bucket: weekly_runs(points, now) for bucket, points in grouped.items()}
     if history:
         from history_archive import merge_history
         merge_history(view, history)
     return view
+
+
+def weekly_runs(points, now):
+    """7日枠の残りを、5時間枠あたりの実測消費から回数へ換算する。
+
+    完了した5時間枠ごとに「週間枠の消費 ÷ 短期枠の消費 × 100」を求め、
+    その中央値を5時間枠を1回使い切った場合の週間消費とする。
+    """
+    windows = {}
+    latest = None
+    for event in points:
+        primary = event.get("primary")
+        secondary = event.get("secondary")
+        if not primary or not secondary:
+            continue
+        latest = event
+        if primary.get("minutes", 0) >= 1440:
+            continue
+        windows.setdefault(primary["reset"], []).append(
+            (event["ts"], primary["used"], secondary["used"], secondary["reset"]))
+    if latest is None:
+        return {"runs": None, "per_window": None, "samples": 0}
+    samples = []
+    for reset, rows in windows.items():
+        if reset > now:
+            continue
+        rows.sort()
+        if len(rows) < 2 or len({row[3] for row in rows}) != 1:
+            continue
+        used = rows[-1][1] - rows[0][1]
+        weekly = rows[-1][2] - rows[0][2]
+        if used < 30 or weekly < 1:
+            continue
+        per = weekly / used * 100
+        if 0 < per <= 100:
+            samples.append(per)
+    per = median(samples[-20:]) if samples else None
+    remaining = max(0.0, 100 - latest["secondary"]["used"])
+    runs = int(remaining // per) if per and per > 0 else None
+    if runs is not None:
+        minutes = latest["primary"].get("minutes", 0)
+        reset = latest["secondary"]["reset"]
+        if minutes > 0 and now < reset:
+            left = int((reset - now) // (minutes * 60))
+            runs = min(runs, max(0, left))
+    return {"runs": runs, "per_window": per, "samples": len(samples), "remaining": remaining}
 
 
 def full_forecast(view, model, bucket, slot="primary"):

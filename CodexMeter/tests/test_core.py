@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core import LogReader, Observations, build_view, forecast, normalize
+from core import LogReader, Observations, build_view, forecast, normalize, weekly_runs
 
 
 def observations(other=False, reset_change=False, backward=False):
@@ -109,6 +109,34 @@ class CoreTests(unittest.TestCase):
             consumed = reader.total_bytes
             self.assertEqual(reader.poll(), [])
             self.assertEqual(reader.total_bytes, consumed)
+
+
+    @staticmethod
+    def weekly_quota(ts, used, reset, weekly, weekly_reset, minutes=300):
+        return {"kind": "quota", "ts": ts, "session": "one", "bucket": "codex",
+                "primary": {"used": used, "minutes": minutes, "reset": reset},
+                "secondary": {"used": weekly, "minutes": 10080, "reset": weekly_reset}}
+
+    def test_weekly_runs_uses_completed_windows(self):
+        points = [self.weekly_quota(1_000, 0, 2_000, 0, 90_000),
+                  self.weekly_quota(1_900, 100, 2_000, 16, 90_000),
+                  self.weekly_quota(2_000, 0, 3_800, 16, 90_000),
+                  self.weekly_quota(3_700, 100, 3_800, 31, 90_000),
+                  self.weekly_quota(5_000, 20, 20_000, 67, 90_000)]
+        result = weekly_runs(points, 10_000)
+        self.assertEqual(result["runs"], 2)
+        self.assertAlmostEqual(result["per_window"], 15.5, places=6)
+        self.assertEqual(result["remaining"], 33)
+
+    def test_weekly_runs_respects_time_to_weekly_reset(self):
+        points = [self.weekly_quota(1_000, 0, 2_000, 0, 37_000),
+                  self.weekly_quota(1_900, 100, 2_000, 16, 37_000),
+                  self.weekly_quota(5_000, 20, 20_000, 67, 37_000)]
+        self.assertEqual(weekly_runs(points, 10_000)["runs"], 1)
+
+    def test_weekly_runs_without_history(self):
+        points = [self.weekly_quota(5_000, 20, 20_000, 67, 90_000)]
+        self.assertIsNone(weekly_runs(points, 10_000)["runs"])
 
 
 if __name__ == "__main__":

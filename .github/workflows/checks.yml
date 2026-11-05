@@ -13,14 +13,24 @@ permissions:
   contents: read
 
 jobs:
-  codex-meter:
-    name: CodexMeter
+  meter:
+    name: ${{ matrix.name }}
     runs-on: windows-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - folder: CodexMeter
+            name: CodexMeter
+            audit: codex-meter
+          - folder: DeepSeekMeter
+            name: DeepSeekMeter
+            audit: deepseek-meter
     defaults:
       run:
         shell: pwsh
-        working-directory: CodexMeter
+        working-directory: ${{ matrix.folder }}
     env:
       PYTHONUTF8: "1"
     steps:
@@ -41,7 +51,7 @@ jobs:
       - name: 依存ライブラリの既知の脆弱性を検査
         # Windows専用の依存条件を取りこぼさないよう、監査もWindowsで行う。
         run: |
-          $auditRequirements = Join-Path $env:RUNNER_TEMP "codex-meter-requirements.txt"
+          $auditRequirements = Join-Path $env:RUNNER_TEMP "${{ matrix.audit }}-requirements.txt"
           uv export --locked --no-emit-project --format requirements-txt --output-file $auditRequirements
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           uvx --from pip-audit==2.10.1 pip-audit --require-hashes --disable-pip --requirement $auditRequirements

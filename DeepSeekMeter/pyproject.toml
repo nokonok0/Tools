@@ -1,0 +1,14 @@
+[project]
+name = "deepseek-meter"
+version = "0.1.0"
+description = "DeepSeekの残高と枯渇までの推定時間、モデル別トークンを表示するWindows用トレイアプリ"
+requires-python = ">=3.11"
+dependencies = [
+    "pillow>=13.0.0",
+    "pystray>=0.19.5,<0.20",
+    "zstandard>=0.23.0",
+]
+
+[tool.uv]
+package = false
+environments = ["sys_platform == 'win32'"]

@@ -4,12 +4,18 @@ import ctypes
 import json
 import os
 import queue
+import re
 import sys
 import threading
 import time
 import tkinter as tk
 from datetime import datetime
+from pathlib import Path
 from tkinter import ttk, messagebox
+
+# 直接起動と各アプリのvenvから共通モジュールを参照する。
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from MeterCommon.runtime_mode import RuntimeControls
 
 from core import LogReader, Observations, build_view, data_directory, default_home, forecast, full_forecast
 from tray_display import make_icon, time_label
@@ -20,7 +26,31 @@ from last_forecast import LastForecast
 from delegation import load_delegation, DelegationNotices, profile_text
 
 TITLE = "Codex Meter"
-BG, INK, MUTED, ACCENT = "#f5f7f8", "#20272d", "#626c74", "#197a68"
+BG, PANEL, INK, MUTED, ACCENT = "#0b0f14", "#131b24", "#e6edf3", "#7b8a97", "#2ee6c8"
+BLUE, WARN, DANGER, LINE = "#5aa9ff", "#ffb454", "#ff6b81", "#22303c"
+FONT = "Yu Gothic UI"
+NUM_FONT = ("Segoe UI Semibold", 12)
+
+
+def credit_short(result):
+    if "remaining" in result:
+        stale = result.get("status") != "ready"
+        return f"OR ${result['remaining']:.2f}" + (" …" if stale else "")
+    return {"loading": "OR …", "missing": "OR 未設定", "auth": "OR 認証",
+            "error": "OR 失敗"}.get(result.get("status"), "OR —")
+
+
+def dark_title(root):
+    if sys.platform != "win32":
+        return
+    try:
+        root.update_idletasks()
+        hwnd = ctypes.windll.user32.GetAncestor(ctypes.c_void_p(root.winfo_id()), 2)
+        enabled = ctypes.c_int(1)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            ctypes.c_void_p(hwnd), 20, ctypes.byref(enabled), ctypes.sizeof(enabled))
+    except Exception:
+        pass
 
 
 def duration(hours):
@@ -54,6 +84,16 @@ def effort_text(effort):
             "default": "既定"}.get(effort, effort)
 
 
+def order_models(models, active=()):
+    levels = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "default")
+    def key(item):
+        name, effort = item
+        match = re.match(r"^gpt-(\d+)(?:\.(\d+))?(?:-|$)", name, re.IGNORECASE)
+        generation = (-int(match.group(1)), -int(match.group(2) or 0)) if match else (0, 0)
+        return (item not in active, *generation, name.casefold(), levels.index(effort) if effort in levels else len(levels), effort)
+    return sorted(models, key=key)
+
+
 def composition_text(signature, *, full=False):
     return " ＋ ".join((f"{model} / {effort} ×{count}" if full else
                         f"{model_text(model)} {effort_text(effort)}×{count}")
@@ -77,10 +117,11 @@ def previous_note(result):
     return ""
 
 
-class Meter:
+class Meter(RuntimeControls):
     def __init__(self, root, tray_enabled=True, show_event=None):
         self.root = root
         self.stop = threading.Event()
+        self.init_runtime()
         self.requests = queue.Queue()
         self.messages = queue.Queue()
         self.reader = LogReader()
@@ -112,60 +153,94 @@ class Meter:
         if sys.platform == "win32":
             root.wm_attributes("-toolwindow", True)
         root.configure(bg=BG)
-        root.minsize(620, 340)
-        width = min(640, root.winfo_screenwidth() - 80)
-        height = min(400, root.winfo_screenheight() - 100)
+        root.minsize(520, 280)
+        width = min(560, root.winfo_screenwidth() - 80)
+        height = min(310, root.winfo_screenheight() - 100)
         root.geometry(f"{width}x{height}+60+60")
         root.protocol("WM_DELETE_WINDOW", self.hide)
+        dark_title(root)
         style = ttk.Style(root)
         style.theme_use("clam")
         style.configure("TFrame", background=BG)
-        style.configure("TLabel", background=BG, foreground=INK, font=("Yu Gothic UI", 9))
-        style.configure("Muted.TLabel", foreground=MUTED)
-        style.configure("Title.TLabel", font=("Segoe UI", 11, "bold"))
-        style.configure("Number.TLabel", font=("Segoe UI", 10, "bold"))
-        style.configure("TButton", font=("Yu Gothic UI", 9), padding=(6, 2))
-        style.configure("Treeview", font=("Yu Gothic UI", 8), rowheight=23,
-                        background="#ffffff", fieldbackground="#ffffff", borderwidth=0)
-        style.configure("Treeview.Heading", font=("Yu Gothic UI", 8, "bold"), padding=(3, 3))
-        style.map("Treeview", background=[("selected", "#d5ebe4")],
-                  foreground=[("selected", INK)])
-        outer = ttk.Frame(root, padding=10)
+        style.configure("TLabel", background=BG, foreground=INK, font=(FONT, 9))
+        style.configure("Muted.TLabel", foreground=MUTED, font=(FONT, 8))
+        style.configure("Title.TLabel", font=("Segoe UI Semibold", 10), foreground=INK)
+        style.configure("Dot.TLabel", font=("Segoe UI", 11), foreground=ACCENT)
+        style.configure("Credit.TLabel", font=("Segoe UI", 8), foreground=BLUE)
+        style.configure("Error.TLabel", font=(FONT, 8), foreground=DANGER)
+        style.configure("TButton", font=(FONT, 8), padding=(5, 1), borderwidth=1,
+                        background=PANEL, foreground=INK, bordercolor=LINE,
+                        lightcolor=LINE, darkcolor=LINE, relief="flat")
+        style.map("TButton", background=[("active", LINE), ("disabled", PANEL)],
+                  foreground=[("active", ACCENT), ("disabled", MUTED)])
+        style.configure("TCombobox", font=(FONT, 8), fieldbackground=PANEL, background=PANEL,
+                        foreground=INK, arrowcolor=MUTED, bordercolor=LINE,
+                        lightcolor=LINE, darkcolor=LINE, padding=(3, 0),
+                        selectbackground=PANEL, selectforeground=INK)
+        style.map("TCombobox", fieldbackground=[("readonly", PANEL), ("disabled", PANEL)],
+                  background=[("readonly", PANEL), ("active", LINE), ("disabled", PANEL)],
+                  foreground=[("readonly", INK), ("disabled", MUTED)],
+                  arrowcolor=[("readonly", MUTED)])
+        root.option_add("*TCombobox*Listbox.background", PANEL)
+        root.option_add("*TCombobox*Listbox.foreground", INK)
+        root.option_add("*TCombobox*Listbox.selectBackground", LINE)
+        root.option_add("*TCombobox*Listbox.selectForeground", ACCENT)
+        style.configure("Treeview", font=(FONT, 8), rowheight=22, background=BG,
+                        fieldbackground=BG, foreground=INK, borderwidth=0)
+        style.configure("Treeview.Heading", font=(FONT, 8), background=PANEL,
+                        foreground=MUTED, relief="flat", padding=(4, 3))
+        style.map("Treeview.Heading", background=[("active", LINE)])
+        style.map("Treeview", background=[("selected", "#123c38")],
+                  foreground=[("selected", ACCENT)])
+        for name in ("Vertical.TScrollbar", "Horizontal.TScrollbar"):
+            style.configure(name, background=PANEL, troughcolor=BG, arrowcolor=MUTED,
+                            bordercolor=BG, lightcolor=PANEL, darkcolor=PANEL)
+        outer = ttk.Frame(root, padding=8)
         outer.pack(fill="both", expand=True)
         outer.columnconfigure(0, weight=1)
         outer.rowconfigure(3, weight=1)
         header = ttk.Frame(outer)
         header.grid(row=0, column=0, sticky="ew")
-        ttk.Label(header, text=TITLE, style="Title.TLabel").pack(side="left")
-        self.refresh_button = ttk.Button(header, text="↻", width=3, command=self.refresh)
+        ttk.Label(header, text="●", style="Dot.TLabel").pack(side="left")
+        ttk.Label(header, text="CODEX METER", style="Title.TLabel").pack(side="left", padx=(3, 0))
+        self.error_label = ttk.Label(header, text="", style="Error.TLabel")
+        self.error_label.pack(side="left", padx=(8, 0))
+        self.refresh_button = ttk.Button(header, text="↻", width=2, command=self.refresh)
         self.refresh_button.pack(side="right")
+        self.mode_button = ttk.Button(header, text=self.mode_caption(), width=4,
+                                      command=self.toggle_runtime_mode)
+        self.mode_button.pack(side="right", padx=3)
         self.bucket = tk.StringVar()
-        self.buckets = ttk.Combobox(header, textvariable=self.bucket, state="readonly", width=16)
-        self.buckets.pack(side="right", padx=10)
+        self.buckets = ttk.Combobox(header, textvariable=self.bucket, state="readonly", width=10)
+        self.buckets.pack(side="right", padx=6)
         self.buckets.bind("<<ComboboxSelected>>", lambda _: self.render())
+        self.header_credit = ttk.Label(header, text="", style="Credit.TLabel")
+        self.header_credit.pack(side="right", padx=6)
         self.quota_frames = {}
-        band = ttk.Frame(outer, padding=(0, 3, 0, 4))
-        band.grid(row=1, column=0, sticky="ew")
+        band = ttk.Frame(outer)
+        band.grid(row=1, column=0, sticky="ew", pady=(4, 3))
         for column, slot in enumerate(("primary", "secondary")):
-            frame = ttk.Frame(band, padding=(0 if column == 0 else 14, 0, 14 if column == 0 else 0, 0))
-            frame.grid(row=0, column=column, sticky="nsew")
-            band.columnconfigure(column, weight=1)
-            label = ttk.Label(frame, text="短期枠" if slot == "primary" else "週間枠", style="Muted.TLabel")
-            label.grid(row=0, column=0, sticky="w")
-            number = ttk.Label(frame, text="—", style="Number.TLabel")
-            number.grid(row=0, column=1, sticky="e")
-            frame.columnconfigure(1, weight=1)
-            bar = tk.Canvas(frame, height=4, highlightthickness=0, background="#dfe5e8")
-            bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(2, 1))
-            reset = ttk.Label(frame, text="取得中", style="Muted.TLabel")
-            reset.grid(row=2, column=0, columnspan=2, sticky="w")
-            self.quota_frames[slot] = (label, number, bar, reset)
+            frame = ttk.Frame(band)
+            frame.grid(row=0, column=column, sticky="nsew", padx=(0, 10) if column == 0 else 0)
+            band.columnconfigure(column, weight=1, uniform="quota")
+            label = ttk.Label(frame, text="", style="Muted.TLabel")
+            label.grid(row=0, column=0, columnspan=2, sticky="w")
+            number = tk.Label(frame, text="—", font=NUM_FONT, bg=BG, fg=INK)
+            number.grid(row=1, column=0, sticky="w", pady=(1, 0))
+            badge = tk.Label(frame, text="", font=(FONT, 8), bg=BG, fg=ACCENT)
+            badge.grid(row=1, column=1, sticky="e")
+            frame.columnconfigure(0, weight=1)
+            bar = tk.Canvas(frame, height=3, highlightthickness=0, background="#1a252f")
+            bar.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(3, 2))
+            reset = ttk.Label(frame, text="", style="Muted.TLabel")
+            reset.grid(row=3, column=0, columnspan=2, sticky="w")
+            self.quota_frames[slot] = (label, number, bar, reset, badge)
             bar.bind("<Configure>", lambda _, s=slot: self.paint_bar(s))
         table_heading = ttk.Frame(outer)
         table_heading.grid(row=2, column=0, sticky="ew", pady=(0, 3))
         self.display_mode = tk.StringVar(value="全体・構成")
         modes = ttk.Combobox(table_heading, textvariable=self.display_mode,
-                             values=("全体・構成", "モデル単独", "委任の実績"), state="readonly", width=12)
+                             values=("全体・構成", "モデル単独", "委任の実績"), state="readonly", width=10)
         modes.pack(side="left")
         modes.bind("<<ComboboxSelected>>", lambda _: self.render())
         self.table_note = ttk.Label(table_heading, text="連続使用時の目安", style="Muted.TLabel")
@@ -173,17 +248,17 @@ class Meter:
         table_frame = ttk.Frame(outer)
         table_frame.grid(row=3, column=0, sticky="nsew")
         cols = ("model", "effort", "primary", "secondary", "measured", "tokens", "rate", "full")
-        self.usage_columns = ("model", "full", "primary", "rate", "measured", "tokens", "secondary")
+        self.usage_columns = ("model", "primary", "secondary", "rate", "full", "measured", "tokens")
         self.delegation_columns = ("task", "candidate", "count", "passed", "rework", "observed", "elapsed", "comparison")
         self.table = ttk.Treeview(table_frame, columns=cols + self.delegation_columns, displaycolumns=self.usage_columns,
-                                  show="headings", selectmode="browse", height=5)
-        titles = ("モデル / 推論", "推論", "残り推定時間", "週間枠の推定時間", "実測時間", "記録トークン", "消費率 (%/時)", "100%使用時間")
-        for col, name, width in zip(cols, titles, (210, 65, 130, 115, 80, 100, 120, 130)):
+                                  show="headings", selectmode="browse", height=4)
+        titles = ("構成 / 推論", "推論", "残り推定時間", "週間枠", "実測", "トークン", "消費率", "100%")
+        for col, name, width in zip(cols, titles, (150, 50, 100, 100, 60, 70, 88, 60)):
             self.table.heading(col, text=name)
-            self.table.column(col, width=width, minwidth=60, stretch=col in ("model", "primary", "secondary"))
+            self.table.column(col, width=width, minwidth=50, stretch=col in ("model", "primary", "secondary"))
         for col, title, width in zip(self.delegation_columns,
                                     ("作業", "モデル / 推論", "件数", "合格", "手直し", "親＋子トークン", "所要時間", "変更前後"),
-                                    (120, 85, 40, 45, 45, 100, 70, 75)):
+                                    (110, 80, 40, 45, 45, 95, 66, 72)):
             self.table.heading(col, text=title)
             self.table.column(col, width=width, minwidth=40, stretch=col == "task")
         horizontal = ttk.Scrollbar(table_frame, orient="horizontal", command=self.table.xview)
@@ -195,12 +270,10 @@ class Meter:
         self.table.configure(yscrollcommand=scroll.set)
         self.table.tag_configure("current", foreground=ACCENT)
         self.table.bind("<<TreeviewSelect>>", self.selection)
-        self.detail = ttk.Label(outer, text="", style="Muted.TLabel", wraplength=740)
-        self.detail.grid(row=4, column=0, sticky="ew", pady=(3, 0))
-        self.status = ttk.Label(outer, text="ログを確認中…", style="Muted.TLabel", wraplength=740)
-        self.status.grid(row=5, column=0, sticky="ew", pady=(2, 0))
-        self.credit_label = ttk.Label(outer, text=credits_text(self.credits), style="Muted.TLabel")
-        self.credit_label.grid(row=6, column=0, sticky="ew", pady=(2, 0))
+        # 説明用の灰色テキストは表示しない。既存の更新処理との互換のためラベルは保持する。
+        self.detail = ttk.Label(outer, text="", style="Muted.TLabel")
+        self.status = ttk.Label(outer, text="", style="Muted.TLabel")
+        self.credit_label = ttk.Label(outer, text="", style="Muted.TLabel")
         self.root.bind("<Configure>", self.wrap_labels)
         self.root.bind("<FocusOut>", lambda _: root.after(150, self.dismiss_if_unfocused))
         self.root.bind("<Escape>", lambda _: self.hide())
@@ -230,6 +303,7 @@ class Meter:
                     self.credit_observations.put({"kind": "credit", "session": "openrouter-credit",
                                                  **{k: result[k] for k in ("ts", "remaining", "purchased", "spent", "account")}})
                     self.requests.put(True)
+                    self.wake.set()
                 self.messages.put(("credits", result))
                 deadline = time.monotonic() + 300
             self.stop.wait(1)
@@ -243,6 +317,9 @@ class Meter:
         archive_checked = False
         try:
             while not self.stop.is_set():
+                self.wake.clear()
+                if self.stop.is_set():
+                    break
                 forced = False
                 while not self.requests.empty():
                     try:
@@ -278,7 +355,7 @@ class Meter:
                     self.messages.put(("error", "Codexのログフォルダが見つかりません。"))
                 except Exception as exc:
                     self.messages.put(("error", f"読み取り失敗 ({type(exc).__name__})。次回更新で再試行します。"))
-                self.stop.wait(10)
+                self.wake.wait(self.runtime_mode.poll_seconds)
         finally:
             try:
                 self.store.save(force=True)
@@ -291,7 +368,10 @@ class Meter:
             icon = make_icon("...", "learning")
             self.tray = pystray.Icon("CodexMeter", icon, TITLE, pystray.Menu(
                 pystray.MenuItem("表示 / 非表示", self.tray_toggle, default=True),
-                pystray.MenuItem("更新", lambda *_: self.requests.put(True)),
+                pystray.MenuItem("更新", lambda *_: self.request_refresh()),
+                pystray.MenuItem("軽量モード（Meter共通）",
+                                 lambda *_: self.messages.put(("mode_toggle", None)),
+                                 checked=lambda _: self.runtime_mode.lightweight),
                 pystray.MenuItem("終了", lambda *_: self.messages.put(("quit", None)))))
             def serve():
                 try:
@@ -341,49 +421,64 @@ class Meter:
             except OSError:
                 pass
 
+    def request_refresh(self):
+        self.requests.put(True)
+        self.credit_requests.put(True)
+        self.wake.set()
+
     def refresh(self):
         if self.busy:
             return
         self.busy = True
         self.refresh_button.configure(state="disabled")
-        self.requests.put(True)
-        self.credit_requests.put(True)
+        self.request_refresh()
         self.status.configure(text="更新中…")
 
     def paint_bar(self, slot):
-        _, _, bar, _ = self.quota_frames[slot]
+        _, _, bar, _, _ = self.quota_frames[slot]
         point = self.view["latest"].get(self.bucket.get()) or {}
         window = point.get(slot)
         bar.delete("all")
+        width = max(1, bar.winfo_width())
         if not window or time.time() >= window["reset"]:
             return
         remaining = 100 - window["used"]
-        color = ACCENT if remaining > 30 else ("#b8791b" if remaining > 10 else "#b43e47")
-        bar.create_rectangle(0, 0, bar.winfo_width() * remaining / 100, 6, fill=color, outline="")
+        color = ACCENT if remaining > 30 else (WARN if remaining > 10 else DANGER)
+        bar.create_rectangle(0, 0, width * remaining / 100, 3, fill=color, outline="")
 
     def render(self):
         now = time.time()
         self.credit_label.configure(text=credits_text(self.credits, now))
+        self.header_credit.configure(text=credit_short(self.credits))
         buckets = sorted(self.view["latest"])
         self.buckets.configure(values=buckets)
         if self.bucket.get() not in buckets:
             self.bucket.set("codex" if "codex" in buckets else (buckets[0] if buckets else ""))
         bucket = self.bucket.get()
         point = self.view["latest"].get(bucket) or {}
-        for slot, (label, number, _, reset) in self.quota_frames.items():
+        runs = (self.view.get("weekly_runs") or {}).get(bucket) or {}
+        for slot, (label, number, _, reset, badge) in self.quota_frames.items():
             window = point.get(slot)
             if not window:
-                number.configure(text="—")
+                number.configure(text="—", fg=INK)
                 reset.configure(text="未取得")
+                badge.configure(text="")
                 continue
             minutes = window["minutes"]
             period = f"{minutes // 1440}日" if minutes >= 1440 else f"{minutes / 60:g}時間"
             label.configure(text=f"{period}枠 · 残り")
             expired = now >= window["reset"]
             old = expired or now - point["ts"] > 300
-            number.configure(text=f"{100 - window['used']:g}%" + (" ※" if old else ""))
+            remaining = 100 - window["used"]
+            number.configure(text=f"{remaining:g}%" + (" ※" if old else ""),
+                             fg=ACCENT if remaining > 30 else (WARN if remaining > 10 else DANGER))
             when = datetime.fromtimestamp(window["reset"]).strftime("%m/%d %H:%M")
             reset.configure(text=f"リセット {when}" + (" · 要更新" if expired else ""))
+            if slot == "secondary":
+                count = runs.get("runs")
+                badge.configure(text=f"5h枠 あと{count}回" if count is not None else "5h枠 あと—回")
+            else:
+                badge.configure(text="")
             self.paint_bar(slot)
         selected = self.table.selection()
         self.table.delete(*self.table.get_children())
@@ -395,12 +490,14 @@ class Meter:
         self.table.configure(displaycolumns=self.delegation_columns if delegated else self.usage_columns)
         self.table_note.configure(text="通常作業・同じ条件ごと" if delegated else "連続使用時の目安")
         self.table.heading("model", text="構成 / 推論 ×人数" if combined else "モデル / 推論")
-        self.table.heading("tokens", text="区間数" if combined else "記録トークン")
+        self.table.heading("tokens", text="区間" if combined else "トークン")
         if delegated:
             self.render_delegation()
         elif combined:
             self.render_orchestration(bucket, now)
-        for index, model in enumerate(self.view["models"] if not combined and not delegated else []):
+        active_models = {key for key, _ in self.view.get("orchestration", {}).get("active", ())}
+        models = order_models(self.view["models"], active_models) if not combined and not delegated else []
+        for index, model in enumerate(models):
             results = [self.last_forecasts.present(("model", model, bucket, slot),
                        forecast(self.view, model, bucket, slot, now)) for slot in ("primary", "secondary")]
             measured = max((self.view["aggregates"].get((model, bucket, s), {}).get("seconds", 0)
@@ -414,7 +511,7 @@ class Meter:
                               f"{self.view.get('usage', {}).get(model, {}).get('total_tokens', 0):,}", rate,
                               full_text(results[0]) if "full_hours" in results[0] else
                               forecast_text(full_forecast(self.view, model, bucket))),
-                              tags=("current",) if index == 0 else ())
+                              tags=("current",) if model in active_models else ())
         if selected and (selected[0] in self.rows or selected[0] in self.orchestration_rows or selected[0] in self.delegation_rows):
             self.table.selection_set(selected[0])
         stamp = self.view["observed_at"]
@@ -462,6 +559,8 @@ class Meter:
                         parts.append(f"{label}: 残り{100 - w['used']:g}% · 更新まで{hours}h{mins:02d}m")
                     else:
                         parts.append(f"{label}: 前回{100 - w['used']:g}% · 更新待ち")
+            if weekly and runs.get("runs") is not None:
+                parts[-1] += f" · 5h枠あと{runs['runs']}回"
             parts.append(composition_text(self.view.get("orchestration", {}).get("active", ())))
             if stamp and now - stamp > 300:
                 parts.append("過去の観測値")
@@ -599,6 +698,7 @@ class Meter:
     def tick(self):
         if self.stop.is_set():
             return
+        self.sync_runtime_mode()
         changed = False
         if self.show_event and ctypes.windll.kernel32.WaitForSingleObject(ctypes.c_void_p(self.show_event), 0) == 0:
             self.show()
@@ -606,6 +706,7 @@ class Meter:
             kind, value = self.messages.get_nowait()
             if kind == "view":
                 self.view = value
+                self.error_label.configure(text="")
                 changed = True
             elif kind == "delegation":
                 self.delegation = value
@@ -631,14 +732,17 @@ class Meter:
                 self.tray_available = False
                 self.show()
                 self.status.configure(text="トレイを作成できませんでした。ウィンドウ表示で動作中です。")
+            elif kind == "mode_toggle":
+                self.toggle_runtime_mode()
             elif kind == "quit":
                 self.quit()
                 return
             elif kind == "error":
                 self.status.configure(text=value)
+                self.error_label.configure(text="⚠ エラー")
                 self.busy = False
                 self.refresh_button.configure(state="normal")
-        if changed or int(time.time()) % 30 == 0:
+        if self.render_due(changed):
             self.render()
         if self.tray_available:
             for notice in self.delegation_notices.update(self.delegation):
@@ -657,6 +761,7 @@ class Meter:
 
     def show(self):
         self.root.deiconify()
+        dark_title(self.root)
         self.position_panel()
         self.root.lift()
         if sys.platform == "win32":
@@ -710,6 +815,7 @@ class Meter:
 
     def quit(self):
         self.stop.set()
+        self.wake.set()
         if self.tray:
             self.tray.stop()
         self.worker.join(timeout=3)
