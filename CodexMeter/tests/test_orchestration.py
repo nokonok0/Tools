@@ -36,7 +36,9 @@ class OrchestrationTests(unittest.TestCase):
         signature = tuple(sorted(((SOL, 1), (LUNA, 1))))
         self.assertEqual(data["orchestration"]["active"], signature)
         total = data["orchestration"]["aggregates"][(signature, "codex", "primary")]
-        self.assertEqual(total, {"seconds": 240, "delta": 4, "samples": 8})
+        self.assertEqual({k: total[k] for k in ("seconds", "delta", "samples")},
+                         {"seconds": 240, "delta": 4, "samples": 8})
+        self.assertEqual(len(total["rate_points"]), 8)
         result = orchestration_forecast(data, "codex", now=1241)
         self.assertEqual(result["status"], "ready")
         self.assertEqual(result["rate"], 60)

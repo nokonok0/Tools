@@ -15,6 +15,8 @@ from tkinter import ttk, messagebox
 # 直接起動と各アプリのvenvから共通モジュールを参照する。
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from MeterCommon.runtime_mode import RuntimeControls
+from MeterCommon.appearance import (BG, PANEL, INK, MUTED, ACCENT, LINE, SELECTED,
+                                    FONT, apply_theme, enable_dpi_awareness, pixels)
 
 from balance import fetch_balance, money
 from core import (LogReader, Observations, build_view, data_directory,
@@ -22,7 +24,6 @@ from core import (LogReader, Observations, build_view, data_directory,
 from tray_display import icon_text, make_icon, time_label
 
 TITLE = "DeepSeek Meter"
-BG, INK, MUTED, ACCENT = "#f5f7f8", "#20272d", "#626c74", "#197a68"
 THRESHOLDS = {"USD": (1.0, 0.5), "CNY": (7.0, 3.5)}
 
 
@@ -106,24 +107,12 @@ class Meter(RuntimeControls):
         if sys.platform == "win32":
             root.wm_attributes("-toolwindow", True)
         root.configure(bg=BG)
-        root.minsize(620, 340)
-        width = min(640, root.winfo_screenwidth() - 80)
-        height = min(400, root.winfo_screenheight() - 100)
+        root.minsize(pixels(root, 580), pixels(root, 250))
+        width = min(pixels(root, 620), root.winfo_screenwidth() - 80)
+        height = min(pixels(root, 280), root.winfo_screenheight() - 100)
         root.geometry(f"{width}x{height}+60+60")
         root.protocol("WM_DELETE_WINDOW", self.hide)
-        style = ttk.Style(root)
-        style.theme_use("clam")
-        style.configure("TFrame", background=BG)
-        style.configure("TLabel", background=BG, foreground=INK, font=("Yu Gothic UI", 9))
-        style.configure("Muted.TLabel", foreground=MUTED)
-        style.configure("Title.TLabel", font=("Segoe UI", 11, "bold"))
-        style.configure("Number.TLabel", font=("Segoe UI", 10, "bold"))
-        style.configure("TButton", font=("Yu Gothic UI", 9), padding=(6, 2))
-        style.configure("Treeview", font=("Yu Gothic UI", 8), rowheight=21,
-                        background="#ffffff", fieldbackground="#ffffff", borderwidth=0)
-        style.configure("Treeview.Heading", font=("Yu Gothic UI", 8, "bold"), padding=(3, 2))
-        style.map("Treeview", background=[("selected", "#d5ebe4")],
-                  foreground=[("selected", INK)])
+        apply_theme(root)
         outer = ttk.Frame(root, padding=8)
         outer.pack(fill="both", expand=True)
         outer.columnconfigure(0, weight=1)
@@ -167,22 +156,22 @@ class Meter(RuntimeControls):
         table_frame.grid(row=3, column=0, sticky="nsew")
         cols = ("model", "effort", "calls", "input", "cached", "output", "total", "last")
         titles = ("モデル", "推論", "回数", "入力", "キャッシュ", "出力", "合計", "最終使用")
-        widths = (95, 40, 40, 60, 88, 55, 70, 105)
+        widths = (100, 35, 35, 60, 65, 55, 65, 95)
         self.table = ttk.Treeview(table_frame, columns=cols, show="headings",
                                   selectmode="browse", height=4)
         for col, name, width in zip(cols, titles, widths):
             self.table.heading(col, text=name)
-            self.table.column(col, width=width, minwidth=40, stretch=col == "model",
+            self.table.column(col, width=pixels(root, width), minwidth=pixels(root, 30), stretch=col == "model",
                               anchor="w" if col in ("model", "effort", "last") else "e")
         scroll = ttk.Scrollbar(table_frame, command=self.table.yview)
         scroll.pack(side="right", fill="y")
         self.table.configure(yscrollcommand=scroll.set)
         self.table.pack(side="left", fill="both", expand=True)
         self.table.bind("<<TreeviewSelect>>", self.selection)
-        self.detail = ttk.Label(outer, text="", style="Muted.TLabel", wraplength=740)
+        self.detail = ttk.Label(outer, text="", style="Muted.TLabel", wraplength=pixels(root, 600))
         self.detail.grid(row=4, column=0, sticky="ew", pady=(3, 0))
         self.status = ttk.Label(outer, text="DSHのセッションログを確認中…", style="Muted.TLabel",
-                                wraplength=740)
+                                wraplength=pixels(root, 600))
         self.status.grid(row=5, column=0, sticky="ew", pady=(2, 0))
         self.root.bind("<Configure>", self.wrap_labels)
         self.root.bind("<FocusOut>", lambda _: root.after(150, self.dismiss_if_unfocused))
@@ -578,6 +567,7 @@ def main():
         kernel.CreateEventW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_bool, ctypes.c_wchar_p]
         kernel.CreateEventW.restype = ctypes.c_void_p
         show_event = kernel.CreateEventW(None, False, False, name + "-Show")
+    enable_dpi_awareness()
     root = tk.Tk()
     try:
         Meter(root, show_event=show_event)

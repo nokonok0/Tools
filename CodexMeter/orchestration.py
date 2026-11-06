@@ -2,6 +2,7 @@
 from collections import Counter, defaultdict
 import bisect
 import time
+from rate_estimate import record, estimate
 
 RECENT_SECONDS = 15 * 60
 
@@ -126,9 +127,7 @@ def build_orchestration(events, intervals, changes, now, incomplete=False):
                 if start >= points[-1]["ts"] - RECENT_SECONDS:
                     selected.append(recent[(bucket, slot)])
                 for aggregate in selected:
-                    aggregate["seconds"] += seconds
-                    aggregate["delta"] += delta
-                    aggregate["samples"] += 1
+                    record(aggregate, end, seconds, delta)
     result.update(aggregates=dict(totals), recent=dict(recent))
     return result
 
@@ -149,6 +148,9 @@ def orchestration_forecast(view, bucket, slot="primary", now=None, signature=Non
     else:
         signature = orchestration.get("active", ()) if signature is None else signature
         aggregate = orchestration.get("aggregates", {}).get((signature, bucket, slot), {})
+    measured_seconds = aggregate.get("seconds", 0)
+    measured_samples = aggregate.get("samples", 0)
+    aggregate = estimate(aggregate) if not recent else aggregate
     seconds = aggregate.get("seconds", 0)
     if seconds < 180 or aggregate.get("samples", 0) < 5 or aggregate.get("delta", 0) < 3:
         return {"status": status if status != "ready" else "learning",
@@ -158,5 +160,6 @@ def orchestration_forecast(view, bucket, slot="primary", now=None, signature=Non
     hours = (100 - window["used"]) / rate
     return {"status": status, "hours": hours, "rate": rate, "full_hours": 100 / rate,
             "observed_at": point["ts"],
-            "seconds": seconds, "samples": aggregate["samples"],
+            "seconds": measured_seconds, "samples": measured_samples,
+            "method": aggregate.get("method", "recent"),
             "reset_first": hours * 3600 >= window["reset"] - point["ts"]}

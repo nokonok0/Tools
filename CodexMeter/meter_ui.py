@@ -16,6 +16,8 @@ from tkinter import ttk, messagebox
 # 直接起動と各アプリのvenvから共通モジュールを参照する。
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from MeterCommon.runtime_mode import RuntimeControls
+from MeterCommon.appearance import (BG, PANEL, INK, MUTED, ACCENT, LINE, SELECTED,
+                                    FONT, apply_theme, enable_dpi_awareness, pixels)
 
 from core import LogReader, Observations, build_view, data_directory, default_home, forecast, full_forecast
 from tray_display import make_icon, time_label
@@ -26,9 +28,7 @@ from last_forecast import LastForecast
 from delegation import load_delegation, DelegationNotices, profile_text
 
 TITLE = "Codex Meter"
-BG, PANEL, INK, MUTED, ACCENT = "#0b0f14", "#131b24", "#e6edf3", "#7b8a97", "#2ee6c8"
-BLUE, WARN, DANGER, LINE = "#5aa9ff", "#ffb454", "#ff6b81", "#22303c"
-FONT = "Yu Gothic UI"
+BLUE, WARN, DANGER = "#427a99", "#a57529", "#b94b50"
 NUM_FONT = ("Segoe UI Semibold", 12)
 
 
@@ -40,13 +40,13 @@ def credit_short(result):
             "error": "OR 失敗"}.get(result.get("status"), "OR —")
 
 
-def dark_title(root):
+def neutral_title(root):
     if sys.platform != "win32":
         return
     try:
         root.update_idletasks()
         hwnd = ctypes.windll.user32.GetAncestor(ctypes.c_void_p(root.winfo_id()), 2)
-        enabled = ctypes.c_int(1)
+        enabled = ctypes.c_int(0)
         ctypes.windll.dwmapi.DwmSetWindowAttribute(
             ctypes.c_void_p(hwnd), 20, ctypes.byref(enabled), ctypes.sizeof(enabled))
     except Exception:
@@ -153,48 +153,13 @@ class Meter(RuntimeControls):
         if sys.platform == "win32":
             root.wm_attributes("-toolwindow", True)
         root.configure(bg=BG)
-        root.minsize(520, 280)
-        width = min(560, root.winfo_screenwidth() - 80)
-        height = min(310, root.winfo_screenheight() - 100)
+        root.minsize(pixels(root, 520), pixels(root, 280))
+        width = min(pixels(root, 560), root.winfo_screenwidth() - 80)
+        height = min(pixels(root, 310), root.winfo_screenheight() - 100)
         root.geometry(f"{width}x{height}+60+60")
         root.protocol("WM_DELETE_WINDOW", self.hide)
-        dark_title(root)
-        style = ttk.Style(root)
-        style.theme_use("clam")
-        style.configure("TFrame", background=BG)
-        style.configure("TLabel", background=BG, foreground=INK, font=(FONT, 9))
-        style.configure("Muted.TLabel", foreground=MUTED, font=(FONT, 8))
-        style.configure("Title.TLabel", font=("Segoe UI Semibold", 10), foreground=INK)
-        style.configure("Dot.TLabel", font=("Segoe UI", 11), foreground=ACCENT)
-        style.configure("Credit.TLabel", font=("Segoe UI", 8), foreground=BLUE)
-        style.configure("Error.TLabel", font=(FONT, 8), foreground=DANGER)
-        style.configure("TButton", font=(FONT, 8), padding=(5, 1), borderwidth=1,
-                        background=PANEL, foreground=INK, bordercolor=LINE,
-                        lightcolor=LINE, darkcolor=LINE, relief="flat")
-        style.map("TButton", background=[("active", LINE), ("disabled", PANEL)],
-                  foreground=[("active", ACCENT), ("disabled", MUTED)])
-        style.configure("TCombobox", font=(FONT, 8), fieldbackground=PANEL, background=PANEL,
-                        foreground=INK, arrowcolor=MUTED, bordercolor=LINE,
-                        lightcolor=LINE, darkcolor=LINE, padding=(3, 0),
-                        selectbackground=PANEL, selectforeground=INK)
-        style.map("TCombobox", fieldbackground=[("readonly", PANEL), ("disabled", PANEL)],
-                  background=[("readonly", PANEL), ("active", LINE), ("disabled", PANEL)],
-                  foreground=[("readonly", INK), ("disabled", MUTED)],
-                  arrowcolor=[("readonly", MUTED)])
-        root.option_add("*TCombobox*Listbox.background", PANEL)
-        root.option_add("*TCombobox*Listbox.foreground", INK)
-        root.option_add("*TCombobox*Listbox.selectBackground", LINE)
-        root.option_add("*TCombobox*Listbox.selectForeground", ACCENT)
-        style.configure("Treeview", font=(FONT, 8), rowheight=22, background=BG,
-                        fieldbackground=BG, foreground=INK, borderwidth=0)
-        style.configure("Treeview.Heading", font=(FONT, 8), background=PANEL,
-                        foreground=MUTED, relief="flat", padding=(4, 3))
-        style.map("Treeview.Heading", background=[("active", LINE)])
-        style.map("Treeview", background=[("selected", "#123c38")],
-                  foreground=[("selected", ACCENT)])
-        for name in ("Vertical.TScrollbar", "Horizontal.TScrollbar"):
-            style.configure(name, background=PANEL, troughcolor=BG, arrowcolor=MUTED,
-                            bordercolor=BG, lightcolor=PANEL, darkcolor=PANEL)
+        neutral_title(root)
+        apply_theme(root)
         outer = ttk.Frame(root, padding=8)
         outer.pack(fill="both", expand=True)
         outer.columnconfigure(0, weight=1)
@@ -230,7 +195,7 @@ class Meter(RuntimeControls):
             badge = tk.Label(frame, text="", font=(FONT, 8), bg=BG, fg=ACCENT)
             badge.grid(row=1, column=1, sticky="e")
             frame.columnconfigure(0, weight=1)
-            bar = tk.Canvas(frame, height=3, highlightthickness=0, background="#1a252f")
+            bar = tk.Canvas(frame, height=pixels(root, 4), highlightthickness=0, background=LINE)
             bar.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(3, 2))
             reset = ttk.Label(frame, text="", style="Muted.TLabel")
             reset.grid(row=3, column=0, columnspan=2, sticky="w")
@@ -252,15 +217,15 @@ class Meter(RuntimeControls):
         self.delegation_columns = ("task", "candidate", "count", "passed", "rework", "observed", "elapsed", "comparison")
         self.table = ttk.Treeview(table_frame, columns=cols + self.delegation_columns, displaycolumns=self.usage_columns,
                                   show="headings", selectmode="browse", height=4)
-        titles = ("構成 / 推論", "推論", "残り推定時間", "週間枠", "実測", "トークン", "消費率", "100%")
-        for col, name, width in zip(cols, titles, (150, 50, 100, 100, 60, 70, 88, 60)):
+        titles = ("構成 / 推論", "推論", "残り", "週間", "実測", "トークン", "消費/時", "100%")
+        for col, name, width in zip(cols, titles, (145, 40, 85, 75, 40, 60, 55, 85)):
             self.table.heading(col, text=name)
-            self.table.column(col, width=width, minwidth=50, stretch=col in ("model", "primary", "secondary"))
+            self.table.column(col, width=pixels(root, width), minwidth=pixels(root, 40), stretch=col in ("model", "primary", "secondary"))
         for col, title, width in zip(self.delegation_columns,
                                     ("作業", "モデル / 推論", "件数", "合格", "手直し", "親＋子トークン", "所要時間", "変更前後"),
                                     (110, 80, 40, 45, 45, 95, 66, 72)):
             self.table.heading(col, text=title)
-            self.table.column(col, width=width, minwidth=40, stretch=col == "task")
+            self.table.column(col, width=pixels(root, width), minwidth=pixels(root, 40), stretch=col == "task")
         horizontal = ttk.Scrollbar(table_frame, orient="horizontal", command=self.table.xview)
         horizontal.pack(side="bottom", fill="x")
         self.table.configure(xscrollcommand=horizontal.set)
@@ -268,7 +233,7 @@ class Meter(RuntimeControls):
         scroll = ttk.Scrollbar(table_frame, command=self.table.yview)
         scroll.pack(side="right", fill="y")
         self.table.configure(yscrollcommand=scroll.set)
-        self.table.tag_configure("current", foreground=ACCENT)
+        self.table.tag_configure("current", foreground=INK, background=SELECTED)
         self.table.bind("<<TreeviewSelect>>", self.selection)
         # 説明用の灰色テキストは表示しない。既存の更新処理との互換のためラベルは保持する。
         self.detail = ttk.Label(outer, text="", style="Muted.TLabel")
@@ -444,7 +409,7 @@ class Meter(RuntimeControls):
             return
         remaining = 100 - window["used"]
         color = ACCENT if remaining > 30 else (WARN if remaining > 10 else DANGER)
-        bar.create_rectangle(0, 0, width * remaining / 100, 3, fill=color, outline="")
+        bar.create_rectangle(0, 0, width * remaining / 100, bar.winfo_height(), fill=color, outline="")
 
     def render(self):
         now = time.time()
@@ -765,7 +730,7 @@ class Meter(RuntimeControls):
 
     def show(self):
         self.root.deiconify()
-        dark_title(self.root)
+        neutral_title(self.root)
         self.position_panel()
         self.root.lift()
         if sys.platform == "win32":
@@ -854,6 +819,7 @@ def main():
         kernel.CreateEventW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_bool, ctypes.c_wchar_p]
         kernel.CreateEventW.restype = ctypes.c_void_p
         show_event = kernel.CreateEventW(None, False, False, name + "-Show")
+    enable_dpi_awareness()
     root = tk.Tk()
     try:
         Meter(root, show_event=show_event)

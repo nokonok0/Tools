@@ -12,6 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from statistics import median
 
+from rate_estimate import record, estimate
+
 DAY = 86400
 MAX_READ = 2 * 1024 * 1024
 
@@ -307,9 +309,7 @@ def build_view(events, now=None, incomplete=False, history=None):
             if (key and key[0].startswith("openrouter/") and not mixed
                     and run[0] <= previous["ts"] and run[1] >= point["ts"]):
                 agg = credit_rates[key]
-                agg["seconds"] += seconds
-                agg["delta"] += delta
-                agg["samples"] += 1
+                record(agg, point["ts"], seconds, delta)
         previous = point
     starts = [r[0] for r in intervals]
     changes_ts = [e["ts"] for e in changes]
@@ -351,9 +351,7 @@ def build_view(events, now=None, incomplete=False, history=None):
                     if not 0 <= delta <= 30:
                         continue
                     agg = aggregates[(key, bucket, slot)]
-                    agg["seconds"] += seconds
-                    agg["delta"] += delta
-                    agg["samples"] += 1
+                    record(agg, after["ts"], seconds, delta)
     view = {"latest": latest, "models": sorted(models, key=models.get, reverse=True), "usage": dict(usage),
             "aggregates": dict(aggregates), "observed_at": max((e["ts"] for e in latest.values()), default=0),
             "incomplete": incomplete, "credit_latest": previous, "credit_baseline": baseline,
@@ -427,6 +425,7 @@ def full_forecast(view, model, bucket, slot="primary"):
         agg = view.get("aggregates", {}).get((model, bucket, slot), {})
         baseline = 100
         minimum_seconds, minimum_samples, minimum_delta = 180, 5, 3
+    agg = estimate(agg, minimum_seconds, minimum_samples, minimum_delta)
     if (agg.get("seconds", 0) < minimum_seconds or agg.get("samples", 0) < minimum_samples
             or agg.get("delta", 0) < minimum_delta):
         return {"status": "learning"}
@@ -440,12 +439,13 @@ def forecast(view, model, bucket, slot, now=None):
         return credit_forecast(view, model, now) if slot == "primary" else {"status": "unavailable"}
     point = view["latest"].get(bucket)
     window = point.get(slot) if point else None
-    agg = view["aggregates"].get((model, bucket, slot))
+    original = view["aggregates"].get((model, bucket, slot), {})
+    agg = estimate(original)
     if not window:
         return {"status": "unavailable"}
     status = ("stale" if now >= window["reset"] or now - point["ts"] > 300 else
               "exhausted" if window["used"] >= 100 else "ready")
-    if not agg or agg["seconds"] < 180 or agg["delta"] < 3 or agg["samples"] < 5:
+    if not original or agg["seconds"] < 180 or agg["delta"] < 3 or agg["samples"] < 5:
         return {"status": status if status != "ready" else "learning",
                 **({"hours": 0} if status == "exhausted" else {}),
                 "seconds": (agg or {}).get("seconds", 0)}
@@ -454,7 +454,8 @@ def forecast(view, model, bucket, slot, now=None):
     return {"status": status, "hours": hours, "rate": rate, "full_hours": 100 / rate,
             "observed_at": point["ts"],
             "reset_first": hours * 3600 >= window["reset"] - point["ts"],
-            "seconds": agg["seconds"], "samples": agg["samples"],
+            "seconds": original.get("seconds", 0), "samples": original.get("samples", 0),
+            "method": agg["method"], "half_life": agg.get("half_life"),
             "low": hours * agg["delta"] / (agg["delta"] + 1),
             "high": hours * agg["delta"] / max(1, agg["delta"] - 1)}
 
@@ -465,7 +466,7 @@ def credit_forecast(view, model, now):
         return {"status": "unavailable"}
     status = ("stale" if now - point["ts"] > 600 else
               "exhausted" if point["remaining"] <= 0 else "ready")
-    agg = view.get("credit_rates", {}).get(model, {})
+    agg = estimate(view.get("credit_rates", {}).get(model, {}), 600, 2, .001)
     if agg.get("seconds", 0) < 600 or agg.get("samples", 0) < 2 or agg.get("delta", 0) < .001:
         return {"status": status if status != "ready" else "learning",
                 **({"hours": 0} if status == "exhausted" else {}),

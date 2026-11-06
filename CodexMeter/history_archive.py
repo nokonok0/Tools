@@ -79,7 +79,10 @@ def checkpoint(view, events):
 def add_totals(mapping, key, values):
     target = mapping.setdefault(key, {})
     for name, value in values.items():
-        target[name] = target.get(name, 0) + value
+        if name == "rate_points":
+            target[name] = target.get(name, []) + value
+        else:
+            target[name] = target.get(name, 0) + value
 
 
 def merge_history(view, history):
